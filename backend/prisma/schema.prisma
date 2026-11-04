@@ -1,0 +1,1005 @@
+// ============================================================================
+// UAE Tax Intelligence Platform - Production Prisma Schema
+// Target Engine: PostgreSQL 16+ with Row-Level Security (RLS) & pgvector
+// Version: 1.0.0
+// ============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DATABASE_URL_UNPOOLED")
+  extensions = [pgcrypto, vector]
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum UserRole {
+  SUPERADMIN
+  ADMIN
+  ACCOUNTANT
+  BOOKKEEPER
+  VIEWER
+}
+
+enum LegalEntityType {
+  NATURAL_PERSON
+  SOLE_ESTABLISHMENT
+  LLC
+  FREE_ZONE_ESTABLISHMENT
+  FREE_ZONE_COMPANY
+  BRANCH_OF_FOREIGN_COMPANY
+  CIVIL_COMPANY
+  OTHER
+}
+
+enum JurisdictionType {
+  MAINLAND
+  FREE_ZONE
+  DESIGNATED_FREE_ZONE
+}
+
+enum LicenseVerificationStatus {
+  UNVERIFIED
+  OCR_EXTRACTED
+  REGISTRY_VERIFIED
+  NEEDS_REVIEW
+  EXPIRED
+}
+
+enum TaxType {
+  CORPORATE_TAX
+  VAT
+}
+
+enum VatRegistrationStatus {
+  NOT_REGISTERED
+  MONITORING_THRESHOLD
+  VOLUNTARY_ELIGIBLE
+  MANDATORY_ELIGIBLE
+  REGISTERED
+  EXEMPT
+}
+
+enum TaxPeriodFrequency {
+  MONTHLY
+  QUARTERLY
+  ANNUALLY
+}
+
+enum VatRateType {
+  STANDARD_5
+  ZERO_RATED_0
+  EXEMPT
+  OUT_OF_SCOPE
+  REVERSE_CHARGE
+}
+
+enum VatRecoverabilityStatus {
+  FULLY_RECOVERABLE
+  PARTIALLY_RECOVERABLE
+  BLOCKED
+  MANUAL_REVIEW_REQUIRED
+  NOT_APPLICABLE
+}
+
+enum AssessmentStatus {
+  DRAFT
+  ESTIMATED
+  NEEDS_REVIEW
+  REVIEWED
+  FINALISED
+  FILED
+}
+
+enum OpportunityStatus {
+  ELIGIBLE
+  POTENTIALLY_ELIGIBLE
+  NOT_ELIGIBLE
+  REQUIRES_REVIEW
+  CLAIMED
+  DISMISSED
+}
+
+enum ObligationType {
+  CT_REGISTRATION
+  CT_RETURN_FILING
+  VAT_REGISTRATION
+  VAT_RETURN_FILING
+  TRADE_LICENSE_RENEWAL
+  E_INVOICING_ONBOARDING
+  RECORD_RETENTION
+  AUDIT_PREPARATION
+}
+
+enum ObligationStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  OVERDUE
+  WAIVED
+}
+
+enum DocumentType {
+  TRADE_LICENSE
+  VAT_CERTIFICATE
+  CT_CERTIFICATE
+  TAX_INVOICE
+  PURCHASE_BILL
+  EXPENSE_RECEIPT
+  CREDIT_NOTE
+  BANK_STATEMENT
+  AUDITED_FINANCIALS
+  MEMORANDUM_OF_ASSOCIATION
+  CONTRACT
+  OTHER
+}
+
+enum OcrProcessingStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REVIEW_REQUIRED
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum AccountSubtype {
+  CASH_EQUIVALENTS
+  ACCOUNTS_RECEIVABLE
+  INVENTORY
+  FIXED_ASSETS
+  ACCUMULATED_DEPRECIATION
+  OTHER_CURRENT_ASSET
+  OTHER_NON_CURRENT_ASSET
+  ACCOUNTS_PAYABLE
+  VAT_PAYABLE
+  CT_PROVISION
+  SHORT_TERM_DEBT
+  LONG_TERM_DEBT
+  OTHER_CURRENT_LIABILITY
+  SHARE_CAPITAL
+  RETAINED_EARNINGS
+  OWNERS_EQUITY
+  OPERATING_REVENUE
+  ZERO_RATED_REVENUE
+  EXEMPT_REVENUE
+  OTHER_INCOME
+  COGS
+  OPERATING_EXPENSE
+  ENTERTAINMENT_EXPENSE
+  RCM_SERVICE_EXPENSE
+  DEPRECIATION_EXPENSE
+  TAX_EXPENSE
+}
+
+enum JournalEntryStatus {
+  DRAFT
+  POSTED
+  REVERSED
+}
+
+enum JournalSourceType {
+  MANUAL
+  SALES_INVOICE
+  PURCHASE_BILL
+  EXPENSE
+  PAYMENT
+  REVERSAL
+  OPENING_BALANCE
+  YEAR_END_CLOSING
+  RECONCILIATION
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  VOID
+  CANCELLED
+}
+
+enum EInvoiceStatus {
+  NOT_APPLICABLE
+  PENDING_SUBMISSION
+  TRANSMITTED_TO_ASP
+  CLEARED_BY_FTA
+  REJECTED
+  FAILED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  REFUNDED
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  CREDIT_CARD
+  DEBIT_CARD
+  CASH
+  CHEQUE
+  UAE_PAY
+  OTHER
+}
+
+// ============================================================================
+// 1. IDENTITY & MULTI-TENANCY DOMAIN
+// ============================================================================
+
+model User {
+  id              String       @id @default(uuid())
+  email           String       @unique
+  phone           String?      @unique
+  passwordHash    String?
+  fullName        String
+  uaePassSub      String?      @unique
+  isBiometricOn   Boolean      @default(false)
+  avatarUrl       String?
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  memberships     Membership[]
+  createdJournals JournalEntry[] @relation("JournalCreator")
+  uploadedDocs    Document[]     @relation("DocUploader")
+  reviewedDocs    Document[]     @relation("DocReviewer")
+  auditEvents     AuditEvent[]
+  learningProgress UserCourseProgress[]
+  aiConversations AiConversation[]
+
+  @@map("users")
+}
+
+model Organisation {
+  id           String       @id @default(uuid())
+  name         String
+  legalName    String?
+  isPractice   Boolean      @default(false) // True if accountancy / tax advisory practice
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  memberships  Membership[]
+  businesses   Business[]
+  auditEvents  AuditEvent[]
+
+  @@map("organisations")
+}
+
+model Membership {
+  id             String       @id @default(uuid())
+  userId         String
+  organisationId String
+  role           UserRole     @default(VIEWER)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organisationId])
+  @@index([organisationId])
+  @@map("memberships")
+}
+
+model Business {
+  id                    String                    @id @default(uuid())
+  organisationId        String
+  legalName             String
+  tradeName             String?
+  legalEntityType       LegalEntityType
+  jurisdictionType      JurisdictionType
+  emirate               String?                   // Dubai, Abu Dhabi, Sharjah, etc.
+  licensingAuthority    String                    // DET, DED, DIFC, ADGM, DMCC, etc.
+  tradeLicenseNumber    String
+  licenseIssueDate      DateTime?
+  licenseExpiryDate     DateTime?
+  verificationStatus    LicenseVerificationStatus @default(UNVERIFIED)
+  businessActivities    String[]                  @default([])
+  currency              String                    @default("AED")
+  accountingMethod      String                    @default("accrual") // accrual | cash
+  financialYearStartDay Int                       @default(1)
+  financialYearStartMon Int                       @default(1) // Jan 1st default
+  isQfzpEligible        Boolean                   @default(false)
+  isNaturalPersonBiz    Boolean                   @default(false) // Cabinet Decision 49/2023 flag
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+
+  organisation          Organisation              @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  taxRegistrations      TaxRegistration[]
+  fiscalYears           FiscalYear[]
+  taxPeriods            TaxPeriod[]
+  accounts              Account[]
+  journalEntries        JournalEntry[]
+  customers             Customer[]
+  suppliers             Supplier[]
+  invoices              Invoice[]
+  expenseBills          ExpenseBill[]
+  taxAssessments        TaxAssessment[]
+  taxOpportunities      TaxOpportunity[]
+  complianceObligations ComplianceObligation[]
+  documents             Document[]
+  auditEvents           AuditEvent[]
+
+  @@unique([organisationId, tradeLicenseNumber])
+  @@index([organisationId])
+  @@index([tradeLicenseNumber])
+  @@map("businesses")
+}
+
+// ============================================================================
+// 2. TAX PROFILE & STATUTORY REGISTRATIONS DOMAIN
+// ============================================================================
+
+model TaxRegistration {
+  id                  String                @id @default(uuid())
+  businessId          String
+  taxType             TaxType
+  trn                 String?               // 15-digit FTA Tax Registration Number
+  status              VatRegistrationStatus @default(NOT_REGISTERED)
+  registrationDate    DateTime?
+  effectiveDate       DateTime?
+  deregistrationDate  DateTime?
+  certificateDocId    String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  business            Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, taxType])
+  @@index([trn])
+  @@map("tax_registrations")
+}
+
+model FiscalYear {
+  id             String         @id @default(uuid())
+  businessId     String
+  year           Int
+  startDate      DateTime
+  endDate        DateTime
+  isClosed       Boolean        @default(false)
+  closedAt       DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  business       Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  taxPeriods     TaxPeriod[]
+  journalEntries JournalEntry[]
+
+  @@unique([businessId, year])
+  @@index([businessId])
+  @@map("fiscal_years")
+}
+
+model TaxPeriod {
+  id             String             @id @default(uuid())
+  businessId     String
+  fiscalYearId   String
+  taxType        TaxType
+  frequency      TaxPeriodFrequency
+  periodNumber   Int                // 1, 2, 3, 4 (or 1 for annual CT)
+  startDate      DateTime
+  endDate        DateTime
+  filingDueDate  DateTime
+  paymentDueDate DateTime
+  isFiled        Boolean            @default(false)
+  filedAt        DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  business       Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  fiscalYear     FiscalYear         @relation(fields: [fiscalYearId], references: [id], onDelete: Cascade)
+  taxAssessments TaxAssessment[]
+
+  @@unique([businessId, taxType, fiscalYearId, periodNumber])
+  @@index([businessId, taxType])
+  @@index([filingDueDate])
+  @@map("tax_periods")
+}
+
+// ============================================================================
+// 3. ACCOUNTING & DOUBLE-ENTRY LEDGER DOMAIN
+// ============================================================================
+
+model Account {
+  id               String          @id @default(uuid())
+  businessId       String
+  accountCode      String          // e.g., "1010", "2150", "4010"
+  accountName      String          // e.g., "Input VAT Recoverable"
+  type             AccountType
+  subtype          AccountSubtype
+  currency         String          @default("AED")
+  isSystemAccount  Boolean         @default(false)
+  isActive         Boolean         @default(true)
+  parentAccountId  String?
+  description      String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  business         Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  parentAccount    Account?        @relation("AccountHierarchy", fields: [parentAccountId], references: [id])
+  childAccounts    Account[]       @relation("AccountHierarchy")
+  journalLines     JournalLine[]
+  invoiceLines     InvoiceLine[]
+  expenseBillLines ExpenseBillLine[]
+
+  @@unique([businessId, accountCode])
+  @@index([businessId, type])
+  @@map("accounts")
+}
+
+model JournalEntry {
+  id                 String             @id @default(uuid())
+  businessId         String
+  fiscalYearId       String
+  entryNumber        String             // e.g., "JE-2026-0001"
+  postingDate        DateTime
+  status             JournalEntryStatus @default(DRAFT)
+  sourceType         JournalSourceType  @default(MANUAL)
+  sourceReferenceId  String?            // FK to Invoice, ExpenseBill, etc.
+  narration          String
+  createdById        String
+  postedAt           DateTime?
+  reversedByEntryId  String?            @unique
+  reversalOfEntryId  String?            @unique
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  business           Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  fiscalYear         FiscalYear         @relation(fields: [fiscalYearId], references: [id], onDelete: Restrict)
+  creator            User               @relation("JournalCreator", fields: [createdById], references: [id])
+  reversedByEntry    JournalEntry?      @relation("ReversalPair", fields: [reversedByEntryId], references: [id])
+  reversalOfEntry    JournalEntry?      @relation("ReversalPair")
+  lines              JournalLine[]
+  invoices           Invoice[]
+  expenseBills       ExpenseBill[]
+
+  @@unique([businessId, entryNumber])
+  @@index([businessId, postingDate])
+  @@index([businessId, status])
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id             String       @id @default(uuid())
+  journalEntryId String
+  accountId      String
+  debit          Decimal      @default(0.0000) @db.Decimal(18, 4)
+  credit         Decimal      @default(0.0000) @db.Decimal(18, 4)
+  currency       String       @default("AED")
+  exchangeRate   Decimal      @default(1.000000) @db.Decimal(12, 6)
+  amountAED      Decimal      @default(0.0000) @db.Decimal(18, 4)
+  memo           String?
+  vatRateType    VatRateType?
+  createdAt      DateTime     @default(now())
+
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account        Account      @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@map("journal_lines")
+}
+
+// ============================================================================
+// 4. INVOICING, BILLS & EXPENSES DOMAIN
+// ============================================================================
+
+model Customer {
+  id             String    @id @default(uuid())
+  businessId     String
+  name           String
+  companyName    String?
+  trn            String?   // 15-digit UAE TRN
+  email          String?
+  phone          String?
+  address        String?
+  isFreeZone     Boolean   @default(false)
+  isForeign      Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  business       Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invoices       Invoice[]
+
+  @@index([businessId])
+  @@index([trn])
+  @@map("customers")
+}
+
+model Supplier {
+  id             String        @id @default(uuid())
+  businessId     String
+  name           String
+  companyName    String?
+  trn            String?       // 15-digit UAE TRN
+  email          String?
+  phone          String?
+  address        String?
+  isForeign      Boolean       @default(false) // Triggers Reverse Charge Mechanism (RCM) checks
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  business       Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  expenseBills   ExpenseBill[]
+
+  @@index([businessId])
+  @@index([trn])
+  @@map("suppliers")
+}
+
+model Invoice {
+  id               String         @id @default(uuid())
+  businessId       String
+  customerId       String
+  journalEntryId   String?
+  invoiceNumber    String
+  issueDate        DateTime
+  dueDate          DateTime
+  currency         String         @default("AED")
+  cbUaeRateDate    DateTime?      // CBUAE official exchange rate date under Art 69
+  exchangeRate     Decimal        @default(1.000000) @db.Decimal(12, 6)
+  subtotal         Decimal        @db.Decimal(18, 4)
+  vatTotal         Decimal        @db.Decimal(18, 4)
+  totalAmount      Decimal        @db.Decimal(18, 4)
+  totalAmountAED   Decimal        @db.Decimal(18, 4)
+  status           InvoiceStatus  @default(DRAFT)
+  eInvoiceStatus   EInvoiceStatus @default(NOT_APPLICABLE)
+  peppolPintXml    String?        @db.Text // UAE e-Invoicing PINT standard
+  aspReference     String?        // Accredited Service Provider transaction ID
+  pdfUrl           String?
+  notes            String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  business         Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer         Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  journalEntry     JournalEntry?  @relation(fields: [journalEntryId], references: [id])
+  lines            InvoiceLine[]
+  payments         Payment[]
+
+  @@unique([businessId, invoiceNumber])
+  @@index([businessId, status])
+  @@index([issueDate])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id             String      @id @default(uuid())
+  invoiceId      String
+  accountId      String      // Revenue account
+  description    String
+  quantity       Decimal     @default(1.0000) @db.Decimal(12, 4)
+  unitPrice      Decimal     @db.Decimal(18, 4)
+  discount       Decimal     @default(0.0000) @db.Decimal(18, 4)
+  vatRateType    VatRateType @default(STANDARD_5)
+  vatPercentage  Decimal     @default(5.00) @db.Decimal(5, 2)
+  vatAmount      Decimal     @db.Decimal(18, 4)
+  lineTotal      Decimal     @db.Decimal(18, 4)
+  lineTotalAED   Decimal     @db.Decimal(18, 4)
+  createdAt      DateTime    @default(now())
+
+  invoice        Invoice     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  account        Account     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([invoiceId])
+  @@map("invoice_lines")
+}
+
+model ExpenseBill {
+  id                     String                  @id @default(uuid())
+  businessId             String
+  supplierId             String?
+  documentId             String?                 // Attached receipt / tax invoice document
+  journalEntryId         String?
+  billNumber             String?
+  billDate               DateTime
+  dueDate                DateTime?
+  currency               String                  @default("AED")
+  exchangeRate           Decimal                 @default(1.000000) @db.Decimal(12, 6)
+  subtotal               Decimal                 @db.Decimal(18, 4)
+  vatTotal               Decimal                 @db.Decimal(18, 4)
+  totalAmount            Decimal                 @db.Decimal(18, 4)
+  totalAmountAED         Decimal                 @db.Decimal(18, 4)
+  isReverseCharge        Boolean                 @default(false) // Cross-border SaaS / RCM
+  vatRecoverability      VatRecoverabilityStatus @default(FULLY_RECOVERABLE)
+  recoverableVatAmount   Decimal                 @default(0.0000) @db.Decimal(18, 4)
+  isCtDeductible         Boolean                 @default(true)
+  ctDeductiblePercentage Decimal                 @default(100.00) @db.Decimal(5, 2) // e.g. 50% for entertainment
+  paymentStatus          PaymentStatus           @default(UNPAID)
+  notes                  String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+
+  business               Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  supplier               Supplier?               @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  document               Document?               @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  journalEntry           JournalEntry?           @relation(fields: [journalEntryId], references: [id])
+  lines                  ExpenseBillLine[]
+  payments               Payment[]
+
+  @@index([businessId, billDate])
+  @@index([businessId, paymentStatus])
+  @@map("expense_bills")
+}
+
+model ExpenseBillLine {
+  id                String                  @id @default(uuid())
+  expenseBillId     String
+  accountId         String                  // Expense account (COGS, Rent, Entertainment, etc.)
+  description       String
+  amount            Decimal                 @db.Decimal(18, 4)
+  amountAED         Decimal                 @db.Decimal(18, 4)
+  vatRateType       VatRateType             @default(STANDARD_5)
+  vatAmount         Decimal                 @default(0.0000) @db.Decimal(18, 4)
+  vatRecoverability VatRecoverabilityStatus @default(FULLY_RECOVERABLE)
+  createdAt         DateTime                @default(now())
+
+  expenseBill       ExpenseBill             @relation(fields: [expenseBillId], references: [id], onDelete: Cascade)
+  account           Account                 @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([expenseBillId])
+  @@map("expense_bill_lines")
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  businessId      String
+  invoiceId       String?
+  expenseBillId   String?
+  amount          Decimal       @db.Decimal(18, 4)
+  amountAED       Decimal       @db.Decimal(18, 4)
+  currency        String        @default("AED")
+  exchangeRate    Decimal       @default(1.000000) @db.Decimal(12, 6)
+  paymentDate     DateTime
+  paymentMethod   PaymentMethod
+  referenceNumber String?
+  notes           String?
+  createdAt       DateTime      @default(now())
+
+  invoice         Invoice?      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  expenseBill     ExpenseBill?  @relation(fields: [expenseBillId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, paymentDate])
+  @@map("payments")
+}
+
+model CbUaeExchangeRate {
+  id           String   @id @default(uuid())
+  currencyCode String   // USD, EUR, GBP, SAR, INR, etc.
+  rateDate     DateTime @db.Date
+  rateToAED    Decimal  @db.Decimal(12, 6)
+  fetchedAt    DateTime @default(now())
+
+  @@unique([currencyCode, rateDate])
+  @@index([rateDate])
+  @@map("cbuae_exchange_rates")
+}
+
+// ============================================================================
+// 5. TAX INTELLIGENCE & OPTIMIZATION DOMAIN
+// ============================================================================
+
+model TaxAssessment {
+  id                 String           @id @default(uuid())
+  businessId         String
+  taxPeriodId        String
+  taxType            TaxType
+  assessmentDate     DateTime         @default(now())
+  status             AssessmentStatus @default(ESTIMATED)
+  ruleSetVersion     String           // e.g., "2026.1-CT"
+  grossRevenueAED    Decimal          @db.Decimal(18, 4)
+  accountingProfitAED Decimal?        @db.Decimal(18, 4)
+  taxableIncomeAED   Decimal?         @db.Decimal(18, 4)
+  outputVatAED       Decimal?         @db.Decimal(18, 4)
+  recoverableVatAED  Decimal?         @db.Decimal(18, 4)
+  netTaxPayableAED   Decimal          @db.Decimal(18, 4)
+  isSmallBizRelief   Boolean          @default(false)
+  isQfzpClaimed      Boolean          @default(false)
+  calculationJson    Json             // Complete deterministic audit payload
+  notes              String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  business           Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  taxPeriod          TaxPeriod        @relation(fields: [taxPeriodId], references: [id], onDelete: Restrict)
+  adjustments        TaxAdjustment[]
+
+  @@index([businessId, taxType])
+  @@map("tax_assessments")
+}
+
+model TaxAdjustment {
+  id              String        @id @default(uuid())
+  taxAssessmentId String
+  label           String        // e.g. "50% Client Entertainment Disallowance Art 32"
+  legalReference  String        // e.g. "Art 32(1) Federal Decree-Law No. 47 of 2022"
+  amountAED       Decimal       @db.Decimal(18, 4)
+  reason          String
+  createdAt       DateTime      @default(now())
+
+  taxAssessment   TaxAssessment @relation(fields: [taxAssessmentId], references: [id], onDelete: Cascade)
+
+  @@index([taxAssessmentId])
+  @@map("tax_adjustments")
+}
+
+model TaxOpportunity {
+  id                   String            @id @default(uuid())
+  businessId           String
+  title                String
+  category             String            // Corporate Tax, VAT, Government Relief
+  legalReference       String            // e.g., "Ministerial Decision No. 73 of 2023"
+  ruleVersion          String
+  status               OpportunityStatus @default(POTENTIALLY_ELIGIBLE)
+  estimatedImpactAED   Decimal?          @db.Decimal(18, 4)
+  requiredDocuments    String[]          @default([])
+  missingConditions    String[]          @default([])
+  explanation          String            @db.Text
+  recommendedAction    String            @db.Text
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  business             Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, status])
+  @@map("tax_opportunities")
+}
+
+// ============================================================================
+// 6. COMPLIANCE & OBLIGATIONS DOMAIN
+// ============================================================================
+
+model ComplianceObligation {
+  id                   String                   @id @default(uuid())
+  businessId           String
+  obligationType       ObligationType
+  title                String
+  description          String?
+  legalReference       String                   // e.g., "FTA Decision No. 3 of 2024"
+  calculatedDueDate    DateTime
+  status               ObligationStatus         @default(PENDING)
+  penaltyAmountAED     Decimal?                 @db.Decimal(18, 4) // e.g. AED 10,000 for CT registration
+  completionDate       DateTime?
+  evidenceDocumentId   String?
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+
+  business             Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  notifications        ComplianceNotification[]
+
+  @@index([businessId, status])
+  @@index([calculatedDueDate])
+  @@map("compliance_obligations")
+}
+
+model ComplianceNotification {
+  id                     String               @id @default(uuid())
+  complianceObligationId String
+  daysBeforeDue          Int                  // 30, 14, 7, 1
+  scheduledFor           DateTime
+  isSent                 Boolean              @default(false)
+  sentAt                 DateTime?
+  notificationChannel    String               @default("PUSH_AND_IN_APP")
+  createdAt              DateTime             @default(now())
+
+  obligation             ComplianceObligation @relation(fields: [complianceObligationId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledFor, isSent])
+  @@map("compliance_notifications")
+}
+
+// ============================================================================
+// 7. DOCUMENT INTELLIGENCE & OCR DOMAIN
+// ============================================================================
+
+model Document {
+  id               String                   @id @default(uuid())
+  businessId       String
+  documentType     DocumentType
+  originalFilename String
+  fileUrl          String                   // Private encrypted S3 object key
+  mimeType         String
+  fileSizeBytes    Int
+  uploadedById     String
+  ocrStatus        OcrProcessingStatus      @default(PENDING)
+  ocrConfidence    Decimal?                 @db.Decimal(5, 2)
+  ocrRawJson       Json?                    // Full native cloud OCR output
+  reviewedById     String?
+  reviewedAt       DateTime?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  business         Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  uploader         User                     @relation("DocUploader", fields: [uploadedById], references: [id])
+  reviewer         User?                    @relation("DocReviewer", fields: [reviewedById], references: [id])
+  extractionFields DocumentExtractionField[]
+  expenseBills     ExpenseBill[]
+
+  @@index([businessId, documentType])
+  @@index([ocrStatus])
+  @@map("documents")
+}
+
+model DocumentExtractionField {
+  id             String   @id @default(uuid())
+  documentId     String
+  fieldKey       String   // "trn", "invoice_date", "total_amount", "vat_amount", "vendor_name"
+  rawValue       String?
+  correctedValue String?  // User-verified or overridden value
+  confidence     Decimal? @db.Decimal(5, 2)
+  boundingBoxJson Json?
+  isVerified     Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  document       Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, fieldKey])
+  @@map("document_extraction_fields")
+}
+
+// ============================================================================
+// 8. TAX ACADEMY & AI RAG DOMAIN
+// ============================================================================
+
+model Course {
+  id          String   @id @default(uuid())
+  title       String
+  slug        String   @unique
+  description String
+  level       String   // "BEGINNER", "INTERMEDIATE", "ADVANCED"
+  isPublished Boolean  @default(true)
+  orderIndex  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lessons     Lesson[]
+
+  @@map("courses")
+}
+
+model Lesson {
+  id          String   @id @default(uuid())
+  courseId    String
+  title       String
+  slug        String
+  contentMd   String   @db.Text
+  orderIndex  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  quizzes     Quiz[]
+
+  @@unique([courseId, slug])
+  @@map("lessons")
+}
+
+model Quiz {
+  id            String   @id @default(uuid())
+  lessonId      String
+  question      String
+  optionsJson   Json     // Array of option strings
+  correctOption Int
+  explanation   String
+  createdAt     DateTime @default(now())
+
+  lesson        Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@map("quizzes")
+}
+
+model UserCourseProgress {
+  id          String   @id @default(uuid())
+  userId      String
+  courseId    String
+  progressPct Decimal  @default(0.00) @db.Decimal(5, 2)
+  isCompleted Boolean  @default(false)
+  lastReadAt  DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@map("user_course_progress")
+}
+
+model KnowledgeDocument {
+  id             String           @id @default(uuid())
+  title          String
+  authority      String           // "FTA", "MOF", "CABINET"
+  documentNumber String?          // e.g. "Cabinet Decision No. 49 of 2023"
+  taxCategory    TaxType
+  sourceUrl      String?
+  effectiveFrom  DateTime?
+  version        Int              @default(1)
+  createdAt      DateTime         @default(now())
+
+  chunks         KnowledgeChunk[]
+
+  @@map("knowledge_documents")
+}
+
+model KnowledgeChunk {
+  id                  String                      @id @default(uuid())
+  knowledgeDocumentId String
+  chunkIndex          Int
+  content             String                      @db.Text
+  metadataJson        Json?
+  embedding           Unsupported("vector(1536)")? // pgvector embedding for semantic retrieval
+  createdAt           DateTime                    @default(now())
+
+  knowledgeDocument   KnowledgeDocument           @relation(fields: [knowledgeDocumentId], references: [id], onDelete: Cascade)
+
+  @@index([knowledgeDocumentId])
+  @@map("knowledge_chunks")
+}
+
+model AiConversation {
+  id         String      @id @default(uuid())
+  userId     String
+  businessId String?
+  title      String
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages   AiMessage[]
+
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id               String         @id @default(uuid())
+  aiConversationId String
+  role             String         // "user" | "assistant" | "system"
+  content          String         @db.Text
+  citationsJson    Json?          // Array of cited UAE Decree-Laws / Decisions
+  createdAt        DateTime       @default(now())
+
+  conversation     AiConversation @relation(fields: [aiConversationId], references: [id], onDelete: Cascade)
+
+  @@map("ai_messages")
+}
+
+// ============================================================================
+// 9. AUDIT TRAIL DOMAIN
+// ============================================================================
+
+model AuditEvent {
+  id             String        @id @default(uuid())
+  organisationId String
+  businessId     String?
+  userId         String?
+  entityType     String        // "JOURNAL_ENTRY", "INVOICE", "TAX_ASSESSMENT", etc.
+  entityId       String
+  action         String        // "CREATE", "POST", "REVERSE", "E_INVOICE_TRANSMIT"
+  ipAddress      String?
+  userAgent      String?
+  changesJson    Json?         // { before: {...}, after: {...} }
+  createdAt      DateTime      @default(now())
+
+  organisation   Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  business       Business?     @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organisationId, createdAt])
+  @@index([businessId, entityType, entityId])
+  @@map("audit_events")
+}

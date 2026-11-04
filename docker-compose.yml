@@ -1,0 +1,29 @@
+# ============================================================================
+# Mizan (ميزان) - Local & Production Database Stack
+# PostgreSQL 16 with pgvector (for AI semantic RAG) and pgcrypto
+# ============================================================================
+
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mizan-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mizan
+      POSTGRES_PASSWORD: mizan_secure_2026
+      POSTGRES_DB: mizan_tax_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - mizan_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mizan -d mizan_tax_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mizan_pgdata:
+    driver: local
