@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, radii, spacing } from '../theme/tokens';
 import { useLocale } from '../context/LocaleContext';
 import { useBusiness } from '../context/BusinessContext';
@@ -13,6 +14,12 @@ import { useRouter } from 'expo-router';
 interface ScreenHeaderProps {
   onPressNotifications?: () => void;
 }
+
+const getBusinessIcon = (iconName?: string): keyof typeof Ionicons.glyphMap => {
+  if (iconName === 'globe-outline' || iconName === '🌐') return 'globe-outline';
+  if (iconName === 'person-outline' || iconName === '👤') return 'person-outline';
+  return 'business-outline';
+};
 
 export const ScreenHeader: React.FC<ScreenHeaderProps> = ({ onPressNotifications }) => {
   const router = useRouter();
@@ -28,7 +35,11 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({ onPressNotifications
           activeOpacity={0.8}
           onPress={() => router.push('/(tabs)/profile')}
         >
-          <Text style={styles.avatarText}>{activeBusiness.icon || '🏢'}</Text>
+          <Ionicons
+            name={getBusinessIcon(activeBusiness?.icon)}
+            size={20}
+            color={colors.neutral.white}
+          />
         </TouchableOpacity>
         <View style={[styles.textBlock, { alignItems: isRTL ? 'flex-end' : 'flex-start' }]}>
           <Text style={styles.greetingText}>
@@ -40,9 +51,13 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({ onPressNotifications
             activeOpacity={0.7}
           >
             <Text style={styles.entityPillText} numberOfLines={1}>
-              {activeBusiness.legalName}
+              {activeBusiness?.tradeName || activeBusiness?.legalName || 'Register Business'}
             </Text>
-            <Text style={styles.switchIcon}>{isRTL ? '◀' : '▶'}</Text>
+            <Ionicons
+              name={isRTL ? 'chevron-back' : 'chevron-forward'}
+              size={12}
+              color={colors.brand.burgundy}
+            />
           </TouchableOpacity>
         </View>
       </View>
@@ -50,10 +65,11 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({ onPressNotifications
       {/* Right: Language Switcher & Flag */}
       <View style={[styles.controlsRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
         <TouchableOpacity
-          style={styles.languagePill}
+          style={[styles.languagePill, { flexDirection: isRTL ? 'row-reverse' : 'row', alignItems: 'center', gap: 4 }]}
           activeOpacity={0.75}
           onPress={toggleLocale}
         >
+          <Ionicons name="globe-outline" size={13} color={colors.brand.burgundy} />
           <Text style={styles.languageText}>{t.common.switchLanguage}</Text>
         </TouchableOpacity>
 

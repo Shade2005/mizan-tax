@@ -6,6 +6,8 @@
 
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { colors, radii, shadows, spacing } from '../theme/tokens';
 import { useLocale } from '../context/LocaleContext';
 
@@ -28,8 +30,9 @@ export const PenaltyShieldCard: React.FC<PenaltyShieldCardProps> = ({
     <View style={[styles.card, shadows.card]}>
       {/* Header Pill */}
       <View style={[styles.headerRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
-        <View style={styles.alertPill}>
-          <Text style={styles.alertPillText}>⚠️ {t.home.penaltyAmountRisk}</Text>
+        <View style={[styles.alertPill, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
+          <Ionicons name="warning-outline" size={13} color={colors.semantic.risk} style={isRTL ? { marginLeft: 4 } : { marginRight: 4 }} />
+          <Text style={styles.alertPillText}>{t.home.penaltyAmountRisk}</Text>
         </View>
         <View style={styles.daysBadge}>
           <Text style={styles.daysBadgeText}>{t.home.daysRemaining}</Text>
@@ -50,11 +53,22 @@ export const PenaltyShieldCard: React.FC<PenaltyShieldCardProps> = ({
       <TouchableOpacity
         style={[styles.actionButton, shadows.pillButton]}
         activeOpacity={0.85}
-        onPress={onPressFiling}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          onPressFiling?.();
+        }}
       >
-        <Text style={styles.actionButtonText}>
-          {t.home.startAssistedFiling} {isRTL ? '←' : '→'}
-        </Text>
+        <View style={[styles.actionButtonContent, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
+          <Text style={styles.actionButtonText}>
+            {t.home.startAssistedFiling}
+          </Text>
+          <Ionicons
+            name={isRTL ? 'arrow-back' : 'arrow-forward'}
+            size={15}
+            color={colors.neutral.white}
+            style={isRTL ? { marginRight: 6 } : { marginLeft: 6 }}
+          />
+        </View>
       </TouchableOpacity>
     </View>
   );
@@ -115,6 +129,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand.burgundy,
     borderRadius: radii.pill,
     paddingVertical: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionButtonContent: {
     alignItems: 'center',
     justifyContent: 'center',
   },

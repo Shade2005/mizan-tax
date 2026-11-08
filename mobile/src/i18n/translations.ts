@@ -10,10 +10,10 @@ export interface TranslationSchema {
   tagline: string;
   tabs: {
     home: string;
-    tax: string;
     books: string;
-    learn: string;
-    profile: string;
+    invoicing: string;
+    tax: string;
+    more: string;
   };
   home: {
     greeting: string;
@@ -128,10 +128,10 @@ export const translations: Record<Locale, TranslationSchema> = {
     tagline: 'UAE Tax Intelligence & Financial Management',
     tabs: {
       home: 'Home',
-      tax: 'Tax',
-      books: 'Books',
-      learn: 'Learn',
-      profile: 'Profile',
+      books: 'Bookkeeping',
+      invoicing: 'Invoicing',
+      tax: 'Tax & Filings',
+      more: 'More',
     },
     home: {
       greeting: 'Good morning,',
@@ -245,10 +245,10 @@ export const translations: Record<Locale, TranslationSchema> = {
     tagline: 'ذكاء الضرائب والإدارة المالية في دولة الإمارات',
     tabs: {
       home: 'الرئيسية',
-      tax: 'الضرائب',
-      books: 'الدفاتر',
-      learn: 'تعلم',
-      profile: 'الحساب',
+      books: 'المحاسبة',
+      invoicing: 'الفواتير',
+      tax: 'الضرائب والإقرارات',
+      more: 'المزيد',
     },
     home: {
       greeting: 'صباح الخير،',

@@ -1,10 +1,11 @@
 // ============================================================================
 // Mizan (ميزان) - Scanner Laser Beam Component
 // Animated Vibrant Cyan (#00E5FF) Laser Sweep across the Reticle
+// Uses native driver for 60fps UI-thread execution; respects Reduce Motion.
 // ============================================================================
 
-import React, { useEffect, useRef } from 'react';
-import { Animated, StyleSheet, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Animated, StyleSheet, View } from 'react-native';
 import { colors } from '../theme/tokens';
 
 interface ScannerLaserBeamProps {
@@ -13,8 +14,35 @@ interface ScannerLaserBeamProps {
 
 export const ScannerLaserBeam: React.FC<ScannerLaserBeamProps> = ({ height = 340 }) => {
   const translateY = useRef(new Animated.Value(0)).current;
+  const [reduceMotion, setReduceMotion] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (isMounted) setReduceMotion(enabled);
+      })
+      .catch(() => {});
+
+    const subscription = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      (enabled) => {
+        if (isMounted) setReduceMotion(enabled);
+      }
+    );
+
+    return () => {
+      isMounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      translateY.setValue(height / 2);
+      return;
+    }
+
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(translateY, {
@@ -32,7 +60,7 @@ export const ScannerLaserBeam: React.FC<ScannerLaserBeamProps> = ({ height = 340
     loop.start();
 
     return () => loop.stop();
-  }, [height, translateY]);
+  }, [height, translateY, reduceMotion]);
 
   return (
     <Animated.View

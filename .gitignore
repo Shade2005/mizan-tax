@@ -42,3 +42,8 @@ desktop.ini
 # Native folders
 mobile/ios/
 mobile/android/
+
+# Mobile Builds & Packages (>100MB)
+*.apk
+*.idsig
+*.aab

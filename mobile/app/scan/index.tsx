@@ -1,9 +1,10 @@
 // ============================================================================
-// Mizan (ميزان) - On-Device Document Scanner Screen
-// Live Camera Viewport, Cyan Laser Sweep, and Edge ML Kit Classifier
+// Mizan (ميزان) - Scan Trade License Screen
+// Connected to Authenticated Backend Vision OCR Service
+// Supports Camera capture, Gallery picker, and Direct Manual Entry
 // ============================================================================
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -11,204 +12,304 @@ import {
   TouchableOpacity,
   Dimensions,
   Platform,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '../../src/components/SafeAreaView';
 import { Ionicons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
-import { colors, radii, shadows, spacing } from '../../src/theme/tokens';
+import { colors, radii, spacing, shadows } from '../../src/theme/tokens';
 import { useLocale } from '../../src/context/LocaleContext';
 import { ScannerLaserBeam } from '../../src/components/ScannerLaserBeam';
+import { OcrProcessingOverlay } from '../../src/animations';
+import { VisionOcr, ExtractedTradeLicense } from '../../src/services/visionOcr';
 
 const { width } = Dimensions.get('window');
 const FRAME_WIDTH = width - 48;
-const FRAME_HEIGHT = FRAME_WIDTH * 1.38;
+const FRAME_HEIGHT = FRAME_WIDTH * 1.35;
 
-export default function ScanScreen() {
+export default function ScanTradeLicenseScreen() {
   const router = useRouter();
-  const { t, isRTL } = useLocale();
+  const { isRTL } = useLocale();
+  const [permission, requestPermission] = useCameraPermissions();
+  const cameraRef = useRef<any>(null);
 
   const [torchOn, setTorchOn] = useState(false);
-  const [activeTab, setActiveTab] = useState<'document' | 'manual'>('document');
-  const [isScanning, setIsScanning] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState<'0.5' | '1x' | '2'>('1x');
+  const [isMultiPage, setIsMultiPage] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  // Trigger capture & edge OCR extraction
-  const handleCapture = async () => {
-    setIsScanning(true);
-    try {
-      if (Platform.OS !== 'web') {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      }
-    } catch {}
+  // Holds extracted data or error from async OCR
+  const ocrResultRef = useRef<{ data?: ExtractedTradeLicense; error?: string } | null>(null);
 
-    // Simulated edge OCR completion -> Navigate to Review Screen
-    setTimeout(() => {
-      setIsScanning(false);
-      router.push({
-        pathname: '/scan/review',
-        params: {
-          licenseNumber: '1234567',
-          businessName: 'Al Nahda Trading LLC',
-          legalForm: 'Limited Liability Company (LLC)',
-          jurisdiction: 'Mainland (Dubai)',
-          issueDate: '15 Jan 2024',
-        },
-      });
-    }, 600);
+  const navigateToReviewWithData = (data?: ExtractedTradeLicense, isManualFallback: boolean = false) => {
+    setIsProcessing(false);
+    router.push({
+      pathname: '/scan/review',
+      params: {
+        licenseNumber: data?.licenseNumber || '',
+        businessName: data?.businessName || '',
+        businessNameAr: data?.businessNameAr || '',
+        legalForm: data?.legalForm || 'Limited Liability Company (LLC)',
+        jurisdiction: data?.jurisdiction || 'Mainland (Dubai)',
+        issueDate: data?.issueDate || '2024-05-15',
+        expiryDate: data?.expiryDate || '2027-05-14',
+        activity: 'General Trading & Commercial Activities',
+        extractionStatus: isManualFallback ? 'MANUALLY_ENTERED' : 'SUCCESS',
+      },
+    });
   };
 
-  // Upload document from gallery
-  const handlePickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 1,
-    });
-
-    if (!result.canceled) {
-      handleCapture();
+  const handleProcessingComplete = () => {
+    const res = ocrResultRef.current;
+    if (res?.data && (res.data.businessName || res.data.licenseNumber)) {
+      navigateToReviewWithData(res.data, false);
+    } else {
+      // OCR failed or unreadable
+      Alert.alert(
+        'Document Recognition Notice',
+        res?.error || 'Document text could not be extracted with statutory confidence. Please enter your trade license details manually.',
+        [
+          {
+            text: 'Enter Details Manually',
+            onPress: () => navigateToReviewWithData(undefined, true),
+          },
+          {
+            text: 'Cancel',
+            style: 'cancel',
+            onPress: () => setIsProcessing(false),
+          },
+        ]
+      );
     }
+  };
+
+  const processImageBase64 = async (base64Data: string, mimeType: string = 'image/jpeg') => {
+    ocrResultRef.current = null;
+    setIsProcessing(true);
+
+    try {
+      const extracted = await VisionOcr.extractTradeLicense(base64Data, mimeType);
+      ocrResultRef.current = { data: extracted };
+    } catch (err: any) {
+      console.warn('Vision OCR backend extraction error:', err?.message || err);
+      ocrResultRef.current = {
+        error: err?.message || 'Could not recognize trade license details.',
+      };
+    }
+  };
+
+  const handleCapture = async () => {
+    if (Platform.OS !== 'web') {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+
+    if (cameraRef.current && permission?.granted) {
+      try {
+        const photo = await cameraRef.current.takePictureAsync({
+          quality: 0.8,
+          base64: true,
+        });
+        if (photo?.base64) {
+          await processImageBase64(photo.base64, 'image/jpeg');
+          return;
+        }
+      } catch (err) {
+        console.warn('Camera capture error, falling back to manual entry:', err);
+      }
+    }
+
+    // If camera unavailable or web, launch image picker or prompt manual entry
+    await handlePickFromGallery();
+  };
+
+  const handlePickFromGallery = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets?.[0]?.base64) {
+        const asset = result.assets[0];
+        const mime = asset.mimeType || 'image/jpeg';
+        await processImageBase64(asset.base64!, mime);
+      }
+    } catch (err: any) {
+      console.warn('Gallery picker error:', err?.message || err);
+    }
+  };
+
+  const handleManualEntry = () => {
+    navigateToReviewWithData(undefined, true);
   };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-      {/* Top Navigation Bar */}
-      <View style={[styles.topBar, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
+      {/* Top Header */}
+      <View style={styles.headerRow}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => router.back()}
           activeOpacity={0.7}
         >
-          <Ionicons name="chevron-back" size={24} color={colors.neutral.textPrimary} />
+          <Ionicons name="arrow-back" size={22} color={colors.neutral.textPrimary} />
         </TouchableOpacity>
 
-        <Text style={styles.screenTitle}>
-          {isRTL ? 'مسح الرخصة التجارية' : 'Scan Trade Licence'}
-        </Text>
+        <Text style={styles.headerTitle}>Scan Trade License</Text>
 
-        <TouchableOpacity
-          style={styles.iconButton}
-          onPress={() => setTorchOn(!torchOn)}
-          activeOpacity={0.7}
-        >
-          <Ionicons
-            name={torchOn ? 'flash' : 'flash-outline'}
-            size={22}
-            color={torchOn ? colors.brand.cyan : colors.neutral.textPrimary}
-          />
-        </TouchableOpacity>
-      </View>
-
-      {/* Main Viewfinder Section */}
-      <View style={styles.viewfinderContainer}>
-        {/* Document Boundary Card / Reticle */}
-        <View style={styles.reticleFrame}>
-          {/* Animated Cyan Laser Sweep */}
-          <ScannerLaserBeam height={FRAME_HEIGHT} />
-
-          {/* UAE Trade Licence Frame Backdrop */}
-          <View style={styles.documentMock}>
-            <View style={styles.emblemBadge}>
-              <Text style={styles.emblemArabic}>حكومة دبي</Text>
-              <Text style={styles.emblemEnglish}>GOVERNMENT OF DUBAI</Text>
-            </View>
-            <Text style={styles.licenceHeading}>رخصة تجارية</Text>
-            <Text style={styles.licenceHeadingEn}>Trade Licence</Text>
-
-            <View style={styles.licenceLine} />
-            <View style={[styles.licenceLine, { width: '70%' }]} />
-            <View style={[styles.licenceLine, { width: '85%' }]} />
-            <View style={[styles.licenceLine, { width: '60%' }]} />
-          </View>
-
-          {/* Corner Guides */}
-          <View style={[styles.corner, styles.cornerTL]} />
-          <View style={[styles.corner, styles.cornerTR]} />
-          <View style={[styles.corner, styles.cornerBL]} />
-          <View style={[styles.corner, styles.cornerBR]} />
-        </View>
-
-        {/* Guidance HUD Pill */}
-        <View style={styles.guidancePill}>
-          <Text style={styles.guidanceText}>
-            {isRTL ? 'وجه الكاميرا نحو الرخصة التجارية' : 'Align Trade Licence within frame'}
-          </Text>
-        </View>
-      </View>
-
-      {/* Bottom Control Bar */}
-      <View style={styles.bottomBar}>
-        <View style={[styles.shutterRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
-          {/* Gallery Button */}
+        <View style={styles.headerRight}>
           <TouchableOpacity
-            style={styles.auxButton}
-            onPress={handlePickImage}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="images-outline" size={26} color={colors.neutral.textPrimary} />
-          </TouchableOpacity>
-
-          {/* Main Deep Burgundy Shutter Button */}
-          <TouchableOpacity
-            style={[styles.shutterButton, shadows.pillButton]}
-            activeOpacity={0.85}
-            onPress={handleCapture}
-          >
-            <View style={styles.shutterInner} />
-          </TouchableOpacity>
-
-          {/* Flash Mode Indicator */}
-          <TouchableOpacity
-            style={styles.auxButton}
+            style={styles.headerIconBtn}
             onPress={() => setTorchOn(!torchOn)}
             activeOpacity={0.7}
           >
-            <Ionicons name="flash-outline" size={26} color={colors.neutral.textPrimary} />
+            <Ionicons
+              name={torchOn ? 'flash' : 'flash-outline'}
+              size={20}
+              color={torchOn ? colors.brand.primary : colors.neutral.textPrimary}
+            />
           </TouchableOpacity>
-        </View>
-
-        {/* Segmented Bottom Pill: Document vs Manual Entry */}
-        <View style={styles.segmentedToggle}>
           <TouchableOpacity
-            style={[
-              styles.segmentItem,
-              activeTab === 'document' && styles.segmentItemActive,
-            ]}
-            onPress={() => setActiveTab('document')}
-            activeOpacity={0.8}
+            style={styles.headerIconBtn}
+            onPress={handleManualEntry}
+            activeOpacity={0.7}
           >
-            <Text
-              style={[
-                styles.segmentItemText,
-                activeTab === 'document' && styles.segmentItemTextActive,
-              ]}
-            >
-              {isRTL ? 'مستند' : 'Document'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.segmentItem,
-              activeTab === 'manual' && styles.segmentItemActive,
-            ]}
-            onPress={() => {
-              setActiveTab('manual');
-              router.push('/scan/review');
-            }}
-            activeOpacity={0.8}
-          >
-            <Text
-              style={[
-                styles.segmentItemText,
-                activeTab === 'manual' && styles.segmentItemTextActive,
-              ]}
-            >
-              {isRTL ? 'إدخال يدوي' : 'Manual Entry'}
-            </Text>
+            <Ionicons name="create-outline" size={20} color={colors.brand.primary} />
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Main Title Banner */}
+      <View style={styles.bannerContainer}>
+        <View style={styles.scannerBadgeIcon}>
+          <Ionicons name="scan" size={26} color={colors.brand.primary} />
+        </View>
+        <Text style={styles.bannerHeading}>Scan Your Trade License</Text>
+        <Text style={styles.bannerSubtext}>
+          We'll automatically read the details and register your business entity in Mizan.
+        </Text>
+        <TouchableOpacity style={styles.manualEntryLink} onPress={handleManualEntry}>
+          <Text style={styles.manualEntryLinkText}>Or enter license details manually →</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Camera Viewfinder Area */}
+      <View style={styles.viewfinderContainer}>
+        {permission?.granted ? (
+          <CameraView
+            ref={cameraRef}
+            style={styles.camera}
+            enableTorch={torchOn}
+          >
+            {/* Dark Surrounding Masks */}
+            <View style={styles.maskDark} />
+
+            {/* Glowing Orange Reticle Frame */}
+            <View style={styles.reticleFrame}>
+              <View style={[styles.cornerBracket, styles.topLeft]} />
+              <View style={[styles.cornerBracket, styles.topRight]} />
+              <View style={[styles.cornerBracket, styles.bottomLeft]} />
+              <View style={[styles.cornerBracket, styles.bottomRight]} />
+
+              {/* Smooth Laser Sweep */}
+              <ScannerLaserBeam height={FRAME_HEIGHT} />
+
+              <View style={styles.reticleInnerGuide}>
+                <Text style={styles.guideText}>Position trade license within frame</Text>
+              </View>
+            </View>
+
+            <View style={styles.maskDark} />
+          </CameraView>
+        ) : (
+          <View style={styles.cameraPlaceholder}>
+            <View style={styles.reticleFrame}>
+              <View style={[styles.cornerBracket, styles.topLeft]} />
+              <View style={[styles.cornerBracket, styles.topRight]} />
+              <View style={[styles.cornerBracket, styles.bottomLeft]} />
+              <View style={[styles.cornerBracket, styles.bottomRight]} />
+              <View style={styles.reticleInnerGuide}>
+                <Ionicons name="document-text-outline" size={44} color={colors.brand.primary} />
+                <Text style={styles.guideText}>Position Trade License Here</Text>
+                <TouchableOpacity
+                  style={styles.permissionBtn}
+                  onPress={requestPermission}
+                >
+                  <Text style={styles.permissionBtnText}>Enable Camera</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Zoom Selector Controls */}
+        <View style={styles.zoomControlRow}>
+          {(['0.5', '1x', '2'] as const).map((lvl) => (
+            <TouchableOpacity
+              key={lvl}
+              style={[styles.zoomPill, zoomLevel === lvl && styles.zoomPillActive]}
+              onPress={() => setZoomLevel(lvl)}
+            >
+              <Text style={[styles.zoomText, zoomLevel === lvl && styles.zoomTextActive]}>
+                {lvl}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* Bottom Shutter & Controls Bar */}
+      <View style={styles.bottomControlsBar}>
+        <TouchableOpacity
+          style={styles.bottomActionItem}
+          onPress={handlePickFromGallery}
+          activeOpacity={0.7}
+        >
+          <View style={styles.smallCircleIcon}>
+            <Ionicons name="images-outline" size={20} color="#FFFFFF" />
+          </View>
+          <Text style={styles.bottomActionLabel}>Gallery</Text>
+        </TouchableOpacity>
+
+        {/* Big Shutter Button */}
+        <TouchableOpacity
+          style={styles.shutterOuterRing}
+          onPress={handleCapture}
+          activeOpacity={0.85}
+          disabled={isProcessing}
+        >
+          <View style={styles.shutterInnerButton}>
+            {isProcessing && <ActivityIndicator color={colors.brand.primary} />}
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.bottomActionItem}
+          onPress={() => setIsMultiPage(!isMultiPage)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.smallCircleIcon}>
+            <Ionicons
+              name={isMultiPage ? 'documents' : 'documents-outline'}
+              size={20}
+              color={isMultiPage ? colors.brand.primary : '#FFFFFF'}
+            />
+          </View>
+          <Text style={styles.bottomActionLabel}>Multiple Pages</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Structured OCR Processing Experience */}
+      <OcrProcessingOverlay
+        visible={isProcessing}
+        onComplete={handleProcessingComplete}
+        documentType="licence"
+      />
     </SafeAreaView>
   );
 }
@@ -216,202 +317,233 @@ export default function ScanScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.neutral.canvas,
+    backgroundColor: '#000000',
   },
-  topBar: {
-    justifyContent: 'space-between',
+  headerRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
+    backgroundColor: colors.neutral.surface,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.neutral.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.neutral.border,
+    padding: 4,
   },
-  screenTitle: {
+  headerTitle: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '800',
     color: colors.neutral.textPrimary,
   },
-  iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerIconBtn: {
+    padding: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.neutral.canvas,
+  },
+  bannerContainer: {
     backgroundColor: colors.neutral.surface,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.md,
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.neutral.border,
+  },
+  scannerBadgeIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.brand.primaryMuted,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.neutral.border,
+    marginBottom: spacing.xs,
+  },
+  bannerHeading: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.neutral.textPrimary,
+    marginBottom: 4,
+  },
+  bannerSubtext: {
+    fontSize: 12,
+    color: colors.neutral.textSecondary,
+    textAlign: 'center',
+    lineHeight: 16,
+    paddingHorizontal: spacing.md,
+  },
+  manualEntryLink: {
+    marginTop: 8,
+    paddingVertical: 4,
+  },
+  manualEntryLinkText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.brand.primary,
   },
   viewfinderContainer: {
     flex: 1,
-    alignItems: 'center',
+    backgroundColor: '#000000',
     justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  camera: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cameraPlaceholder: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#0A0A0A',
+  },
+  maskDark: {
+    width: '100%',
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
   },
   reticleFrame: {
     width: FRAME_WIDTH,
     height: FRAME_HEIGHT,
     borderRadius: radii.xl,
-    overflow: 'hidden',
     position: 'relative',
-    backgroundColor: colors.neutral.surface,
-    borderWidth: 1.5,
-    borderColor: 'rgba(0, 229, 255, 0.4)',
-    alignItems: 'center',
+    overflow: 'hidden',
     justifyContent: 'center',
-  },
-  documentMock: {
-    width: '88%',
-    height: '90%',
-    backgroundColor: '#FAF7F8',
-    borderRadius: radii.md,
-    padding: spacing.lg,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.neutral.border,
   },
-  emblemBadge: {
-    alignItems: 'center',
-    marginBottom: spacing.sm,
-  },
-  emblemArabic: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.brand.burgundy,
-  },
-  emblemEnglish: {
-    fontSize: 8,
-    fontWeight: '600',
-    color: colors.neutral.textSecondary,
-    letterSpacing: 0.5,
-  },
-  licenceHeading: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.neutral.textPrimary,
-    marginTop: spacing.xs,
-  },
-  licenceHeadingEn: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.neutral.textSecondary,
-    marginBottom: spacing.md,
-  },
-  licenceLine: {
-    height: 6,
-    width: '90%',
-    backgroundColor: colors.neutral.border,
-    borderRadius: 3,
-    marginBottom: spacing.sm,
-  },
-  corner: {
+  cornerBracket: {
     position: 'absolute',
-    width: 24,
-    height: 24,
-    borderColor: colors.brand.cyan,
+    width: 32,
+    height: 32,
+    borderColor: colors.brand.primary,
   },
-  cornerTL: {
-    top: 10,
-    left: 10,
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
+  topLeft: {
+    top: 0,
+    left: 0,
+    borderTopWidth: 4,
+    borderLeftWidth: 4,
+    borderTopLeftRadius: radii.xl,
   },
-  cornerTR: {
-    top: 10,
-    right: 10,
-    borderTopWidth: 3,
-    borderRightWidth: 3,
+  topRight: {
+    top: 0,
+    right: 0,
+    borderTopWidth: 4,
+    borderRightWidth: 4,
+    borderTopRightRadius: radii.xl,
   },
-  cornerBL: {
-    bottom: 10,
-    left: 10,
-    borderBottomWidth: 3,
-    borderLeftWidth: 3,
+  bottomLeft: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: 4,
+    borderLeftWidth: 4,
+    borderBottomLeftRadius: radii.xl,
   },
-  cornerBR: {
-    bottom: 10,
-    right: 10,
-    borderBottomWidth: 3,
-    borderRightWidth: 3,
+  bottomRight: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: 4,
+    borderRightWidth: 4,
+    borderBottomRightRadius: radii.xl,
   },
-  guidancePill: {
-    backgroundColor: colors.brand.burgundy,
-    paddingHorizontal: spacing.lg,
+  reticleInnerGuide: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radii.pill,
-    marginTop: spacing.lg,
   },
-  guidanceText: {
-    color: colors.neutral.white,
+  guideText: {
+    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
   },
-  bottomBar: {
-    paddingHorizontal: spacing.xl,
-    paddingBottom: spacing.lg,
-    alignItems: 'center',
-  },
-  shutterRow: {
-    width: '100%',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  auxButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.neutral.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.neutral.border,
-  },
-  shutterButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: colors.neutral.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: colors.brand.burgundy,
-  },
-  shutterInner: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: colors.brand.burgundy,
-  },
-  segmentedToggle: {
-    flexDirection: 'row',
-    backgroundColor: colors.brand.blushSoft,
+  permissionBtn: {
+    marginTop: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: radii.pill,
-    padding: 3,
-    borderWidth: 1,
-    borderColor: colors.brand.blushAlt,
+    backgroundColor: colors.brand.primary,
   },
-  segmentItem: {
-    paddingVertical: spacing.xs + 2,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radii.pill,
-  },
-  segmentItemActive: {
-    backgroundColor: colors.brand.burgundy,
-  },
-  segmentItemText: {
+  permissionBtnText: {
+    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
-    color: colors.brand.burgundy,
   },
-  segmentItemTextActive: {
-    color: colors.neutral.white,
+  zoomControlRow: {
+    position: 'absolute',
+    bottom: 16,
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    padding: 4,
+    borderRadius: radii.pill,
+  },
+  zoomPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+  },
+  zoomPillActive: {
+    backgroundColor: colors.brand.primary,
+  },
+  zoomText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  zoomTextActive: {
+    color: '#FFFFFF',
+  },
+  bottomControlsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.xl,
+    backgroundColor: '#000000',
+  },
+  bottomActionItem: {
+    alignItems: 'center',
+    minWidth: 70,
+  },
+  smallCircleIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#262626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  bottomActionLabel: {
+    color: '#A3A3A3',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  shutterOuterRing: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    borderWidth: 4,
+    borderColor: '#FFFFFF',
+    padding: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shutterInnerButton: {
+    width: '100%',
+    height: '100%',
+    borderRadius: radii.pill,
+    backgroundColor: colors.brand.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

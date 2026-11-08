@@ -12,6 +12,7 @@ import {
   IsNumber,
   IsArray,
   IsDateString,
+  Min,
 } from 'class-validator';
 
 export enum LegalEntityTypeDto {
@@ -30,20 +31,20 @@ export enum JurisdictionTypeDto {
 }
 
 export class CreateTradeLicenseDto {
-  @ApiProperty({ description: 'Parent organization ID', example: 'org-123' })
+  @ApiPropertyOptional({ description: 'Parent organization ID (auto-populated by server)', example: 'org-123' })
   @IsString()
-  @IsNotEmpty()
-  organisationId: string;
+  @IsOptional()
+  organisationId?: string;
 
   @ApiProperty({ description: 'Official UAE Trade License number', example: '1234567' })
   @IsString()
-  @IsNotEmpty()
-  tradeLicenseNumber: string;
+  @IsNotEmpty({ message: 'tradeLicenseNumber is required' })
+  tradeLicenseNumber!: string;
 
   @ApiProperty({ description: 'Business Legal Name (English)', example: 'Al Nahda Trading LLC' })
   @IsString()
-  @IsNotEmpty()
-  legalName: string;
+  @IsNotEmpty({ message: 'legalName is required' })
+  legalName!: string;
 
   @ApiPropertyOptional({ description: 'Business Trade Name', example: 'Al Nahda' })
   @IsString()
@@ -52,16 +53,16 @@ export class CreateTradeLicenseDto {
 
   @ApiProperty({ enum: LegalEntityTypeDto, example: LegalEntityTypeDto.LLC })
   @IsEnum(LegalEntityTypeDto)
-  legalEntityType: LegalEntityTypeDto;
+  legalEntityType!: LegalEntityTypeDto;
 
   @ApiProperty({ enum: JurisdictionTypeDto, example: JurisdictionTypeDto.MAINLAND })
   @IsEnum(JurisdictionTypeDto)
-  jurisdictionType: JurisdictionTypeDto;
+  jurisdictionType!: JurisdictionTypeDto;
 
   @ApiProperty({ description: 'Issuing Authority (DET Dubai, ADGM, DMCC, etc.)', example: 'DET Dubai' })
   @IsString()
-  @IsNotEmpty()
-  licensingAuthority: string;
+  @IsNotEmpty({ message: 'licensingAuthority is required' })
+  licensingAuthority!: string;
 
   @ApiPropertyOptional({ description: 'Emirate of incorporation', example: 'Dubai' })
   @IsString()
@@ -80,11 +81,32 @@ export class CreateTradeLicenseDto {
 
   @ApiPropertyOptional({ description: 'Estimated annual business revenue in AED', example: 1200000 })
   @IsNumber()
+  @Min(0)
   @IsOptional()
   annualRevenueEstimateAED?: number;
+
+  @ApiPropertyOptional({ description: 'VAT TRN (15 digits)', example: '100234567800003' })
+  @IsString()
+  @IsOptional()
+  vatTrn?: string;
+
+  @ApiPropertyOptional({ description: 'Corporate Tax Registration Number', example: 'CT-1002345678' })
+  @IsString()
+  @IsOptional()
+  corporateTaxTrn?: string;
+
+  @ApiPropertyOptional({ description: 'Registered business address', example: 'Office 402, Business Bay, Dubai' })
+  @IsString()
+  @IsOptional()
+  address?: string;
 
   @ApiPropertyOptional({ description: 'Licensed business activities', example: ['General Trading', 'Import & Export'] })
   @IsArray()
   @IsOptional()
   businessActivities?: string[];
+
+  @ApiPropertyOptional({ description: 'Verification status', example: 'OCR_EXTRACTED' })
+  @IsString()
+  @IsOptional()
+  verificationStatus?: string;
 }

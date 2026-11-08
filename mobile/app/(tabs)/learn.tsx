@@ -5,8 +5,9 @@
 
 import React from 'react';
 import { ScrollView, StyleSheet, View, Text, TouchableOpacity } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '../../src/components/SafeAreaView';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, radii, shadows, spacing } from '../../src/theme/tokens';
 import { useLocale } from '../../src/context/LocaleContext';
 
@@ -33,7 +34,7 @@ export default function LearnScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={[styles.header, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
-          <Text style={styles.title}>{t.tabs.learn}</Text>
+          <Text style={styles.title}>Tax Academy</Text>
           <View style={styles.badge}>
             <Text style={styles.badgeText}>{t.learn.badge}</Text>
           </View>
@@ -46,7 +47,9 @@ export default function LearnScreen() {
           onPress={() => handleOpenAi()}
         >
           <View style={[styles.aiTopRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
-            <Text style={styles.aiIcon}>✨</Text>
+            <View style={styles.aiIconWrapper}>
+              <Ionicons name="sparkles" size={20} color={colors.brand.burgundy} />
+            </View>
             <View style={styles.aiTag}>
               <Text style={styles.aiTagText}>{t.learn.groundedInLaw}</Text>
             </View>
@@ -77,7 +80,7 @@ export default function LearnScreen() {
             activeOpacity={0.8}
           >
             <View style={[styles.cardHeaderRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
-              <Text style={styles.quickIcon}>🏢</Text>
+              <Ionicons name="business-outline" size={20} color={colors.brand.burgundy} />
               <Text style={styles.quickBadge}>Article 21</Text>
             </View>
             <Text style={[styles.quickTitle, { textAlign: isRTL ? 'right' : 'left' }]}>
@@ -94,7 +97,7 @@ export default function LearnScreen() {
             activeOpacity={0.8}
           >
             <View style={[styles.cardHeaderRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
-              <Text style={styles.quickIcon}>✈️</Text>
+              <Ionicons name="airplane-outline" size={20} color={colors.brand.burgundy} />
               <Text style={styles.quickBadge}>Decision 17/2026</Text>
             </View>
             <Text style={[styles.quickTitle, { textAlign: isRTL ? 'right' : 'left' }]}>
@@ -111,7 +114,7 @@ export default function LearnScreen() {
             activeOpacity={0.8}
           >
             <View style={[styles.cardHeaderRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
-              <Text style={styles.quickIcon}>⚠️</Text>
+              <Ionicons name="warning-outline" size={20} color={colors.semantic.risk} />
               <Text style={styles.quickBadge}>Decision 3/2024</Text>
             </View>
             <Text style={[styles.quickTitle, { textAlign: isRTL ? 'right' : 'left' }]}>
@@ -128,7 +131,7 @@ export default function LearnScreen() {
             activeOpacity={0.8}
           >
             <View style={[styles.cardHeaderRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
-              <Text style={styles.quickIcon}>📑</Text>
+              <Ionicons name="document-text-outline" size={20} color={colors.brand.burgundy} />
               <Text style={styles.quickBadge}>Peppol PINT</Text>
             </View>
             <Text style={[styles.quickTitle, { textAlign: isRTL ? 'right' : 'left' }]}>
@@ -229,6 +232,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: spacing.sm,
+  },
+  aiIconWrapper: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.brand.blushSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   aiIcon: {
     fontSize: 24,

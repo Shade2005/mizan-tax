@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, radii, shadows, spacing } from '../theme/tokens';
 import { useLocale } from '../context/LocaleContext';
 
@@ -48,10 +49,16 @@ export const TaxOpportunityCard: React.FC<TaxOpportunityCardProps> = ({
         {description}
       </Text>
 
-      <View style={[styles.bottomRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
+      <View style={[styles.bottomRow, { flexDirection: isRTL ? 'row-reverse' : 'row', alignItems: 'center', justifyContent: isRTL ? 'flex-start' : 'flex-end' }]}>
         <Text style={styles.actionPrompt}>
-          {isRTL ? 'مراجعة الفرصة والمطالبة ←' : 'Review & Claim Opportunity →'}
+          {isRTL ? 'مراجعة الفرصة والمطالبة' : 'Review & Claim Opportunity'}
         </Text>
+        <Ionicons
+          name={isRTL ? 'arrow-back' : 'arrow-forward'}
+          size={14}
+          color={colors.brand.burgundy}
+          style={isRTL ? { marginRight: 4 } : { marginLeft: 4 }}
+        />
       </View>
     </TouchableOpacity>
   );

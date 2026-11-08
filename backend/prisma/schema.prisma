@@ -91,11 +91,14 @@ enum VatRecoverabilityStatus {
 
 enum AssessmentStatus {
   DRAFT
-  ESTIMATED
-  NEEDS_REVIEW
+  REQUIRES_ATTENTION
+  READY_FOR_REVIEW
   REVIEWED
   FINALISED
+  SUPERSEDED
+  ESTIMATED
   FILED
+  NEEDS_REVIEW
 }
 
 enum OpportunityStatus {
@@ -124,6 +127,27 @@ enum ObligationStatus {
   COMPLETED
   OVERDUE
   WAIVED
+}
+
+enum ReportType {
+  PROFIT_AND_LOSS
+  VAT_RETURN_201_REPORT
+  CORPORATE_TAX_REPORT
+  TAX_READINESS_AUDIT
+  EXPENSE_BREAKDOWN
+  TRANSACTION_LEDGER
+}
+
+enum ReportFormat {
+  PDF
+  CSV
+  JSON
+}
+
+enum ReportStatus {
+  READY
+  GENERATING
+  FAILED
 }
 
 enum DocumentType {
@@ -239,6 +263,16 @@ enum PaymentMethod {
   OTHER
 }
 
+enum ExpenseStatus {
+  UPLOADED
+  PROCESSING
+  REVIEW_REQUIRED
+  APPROVED
+  PROCESSING_FAILED
+  REJECTED
+  ARCHIVED
+}
+
 // ============================================================================
 // 1. IDENTITY & MULTI-TENANCY DOMAIN
 // ============================================================================
@@ -334,6 +368,8 @@ model Business {
   taxAssessments        TaxAssessment[]
   taxOpportunities      TaxOpportunity[]
   complianceObligations ComplianceObligation[]
+  generatedReports      GeneratedReport[]
+  readinessSnapshots    TaxReadinessSnapshot[]
   documents             Document[]
   auditEvents           AuditEvent[]
 
@@ -617,12 +653,31 @@ model ExpenseBill {
   vatTotal               Decimal                 @db.Decimal(18, 4)
   totalAmount            Decimal                 @db.Decimal(18, 4)
   totalAmountAED         Decimal                 @db.Decimal(18, 4)
+  subtotalAED            Decimal?                @db.Decimal(18, 4)
+  vatTotalAED            Decimal?                @db.Decimal(18, 4)
+  supplierName           String?
+  supplierTrn            String?
+  description            String?
+  category               String                  @default("OTHER_BUSINESS_EXPENSES")
+  status                 ExpenseStatus           @default(REVIEW_REQUIRED)
+  paymentMethod          PaymentMethod?
+  paymentStatus          PaymentStatus           @default(UNPAID)
   isReverseCharge        Boolean                 @default(false) // Cross-border SaaS / RCM
   vatRecoverability      VatRecoverabilityStatus @default(FULLY_RECOVERABLE)
   recoverableVatAmount   Decimal                 @default(0.0000) @db.Decimal(18, 4)
+  vatRate                Decimal?                @default(5.00) @db.Decimal(5, 2)
+  vatTreatment           String?                 @default("STANDARD_5")
+  ocrStatus              OcrProcessingStatus?
+  ocrConfidence          Decimal?                @db.Decimal(5, 2)
+  ocrRawData             Json?
+  conversionEvidence     Json?
+  fileHash               String?
+  duplicateWarning       Boolean                 @default(false)
+  duplicateReferenceId   String?
+  approvedById           String?
+  approvedAt             DateTime?
   isCtDeductible         Boolean                 @default(true)
   ctDeductiblePercentage Decimal                 @default(100.00) @db.Decimal(5, 2) // e.g. 50% for entertainment
-  paymentStatus          PaymentStatus           @default(UNPAID)
   notes                  String?
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
@@ -635,24 +690,30 @@ model ExpenseBill {
   payments               Payment[]
 
   @@index([businessId, billDate])
+  @@index([businessId, status])
+  @@index([businessId, category])
   @@index([businessId, paymentStatus])
+  @@index([businessId, fileHash])
   @@map("expense_bills")
 }
 
 model ExpenseBillLine {
   id                String                  @id @default(uuid())
   expenseBillId     String
-  accountId         String                  // Expense account (COGS, Rent, Entertainment, etc.)
+  accountId         String?                 // Expense account (COGS, Rent, Entertainment, etc.)
   description       String
+  quantity          Decimal                 @default(1.0000) @db.Decimal(12, 4)
+  unitPrice         Decimal?                @db.Decimal(18, 4)
   amount            Decimal                 @db.Decimal(18, 4)
   amountAED         Decimal                 @db.Decimal(18, 4)
   vatRateType       VatRateType             @default(STANDARD_5)
+  vatPercentage     Decimal                 @default(5.00) @db.Decimal(5, 2)
   vatAmount         Decimal                 @default(0.0000) @db.Decimal(18, 4)
   vatRecoverability VatRecoverabilityStatus @default(FULLY_RECOVERABLE)
   createdAt         DateTime                @default(now())
 
   expenseBill       ExpenseBill             @relation(fields: [expenseBillId], references: [id], onDelete: Cascade)
-  account           Account                 @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  account           Account?                @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
   @@index([expenseBillId])
   @@map("expense_bill_lines")
@@ -697,40 +758,53 @@ model CbUaeExchangeRate {
 // ============================================================================
 
 model TaxAssessment {
-  id                 String           @id @default(uuid())
-  businessId         String
-  taxPeriodId        String
-  taxType            TaxType
-  assessmentDate     DateTime         @default(now())
-  status             AssessmentStatus @default(ESTIMATED)
-  ruleSetVersion     String           // e.g., "2026.1-CT"
-  grossRevenueAED    Decimal          @db.Decimal(18, 4)
-  accountingProfitAED Decimal?        @db.Decimal(18, 4)
-  taxableIncomeAED   Decimal?         @db.Decimal(18, 4)
-  outputVatAED       Decimal?         @db.Decimal(18, 4)
-  recoverableVatAED  Decimal?         @db.Decimal(18, 4)
-  netTaxPayableAED   Decimal          @db.Decimal(18, 4)
-  isSmallBizRelief   Boolean          @default(false)
-  isQfzpClaimed      Boolean          @default(false)
-  calculationJson    Json             // Complete deterministic audit payload
-  notes              String?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  id                  String           @id @default(uuid())
+  businessId          String
+  taxPeriodId         String?
+  taxType             TaxType
+  periodKey           String?          // e.g., "2026-Q1", "2026-M11", "FY2026"
+  periodStartDate     DateTime?
+  periodEndDate       DateTime?
+  assessmentDate      DateTime         @default(now())
+  status              AssessmentStatus @default(DRAFT)
+  ruleSetVersion      String           // e.g., "2026.2-VAT", "2026.1-CT"
+  grossRevenueAED     Decimal          @db.Decimal(18, 4)
+  accountingProfitAED Decimal?         @db.Decimal(18, 4)
+  taxableIncomeAED    Decimal?         @db.Decimal(18, 4)
+  outputVatAED        Decimal?         @db.Decimal(18, 4)
+  recoverableVatAED   Decimal?         @db.Decimal(18, 4)
+  netTaxPayableAED    Decimal          @db.Decimal(18, 4)
+  effectiveTaxRate    Decimal?         @db.Decimal(5, 2)
+  isSmallBizRelief    Boolean          @default(false)
+  isQfzpClaimed       Boolean          @default(false)
+  complianceScore     Int?             @default(100)
+  complianceFindings  Json?            // Structured array of compliance warnings & actions
+  sourceInvoicesCount Int?             @default(0)
+  sourceExpensesCount Int?             @default(0)
+  calculationJson     Json             // Complete deterministic audit payload
+  reassessedFromId    String?
+  notes               String?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
 
-  business           Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  taxPeriod          TaxPeriod        @relation(fields: [taxPeriodId], references: [id], onDelete: Restrict)
-  adjustments        TaxAdjustment[]
+  business            Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  taxPeriod           TaxPeriod?       @relation(fields: [taxPeriodId], references: [id], onDelete: Restrict)
+  adjustments         TaxAdjustment[]
 
   @@index([businessId, taxType])
+  @@index([businessId, status])
+  @@index([periodStartDate, periodEndDate])
   @@map("tax_assessments")
 }
 
 model TaxAdjustment {
   id              String        @id @default(uuid())
   taxAssessmentId String
+  code            String?       // e.g. "ENTERTAINMENT_ART_32"
   label           String        // e.g. "50% Client Entertainment Disallowance Art 32"
   legalReference  String        // e.g. "Art 32(1) Federal Decree-Law No. 47 of 2022"
   amountAED       Decimal       @db.Decimal(18, 4)
+  isAddition      Boolean       @default(true)
   reason          String
   createdAt       DateTime      @default(now())
 
@@ -775,9 +849,14 @@ model ComplianceObligation {
   legalReference       String                   // e.g., "FTA Decision No. 3 of 2024"
   calculatedDueDate    DateTime
   status               ObligationStatus         @default(PENDING)
+  severity             String                   @default("MEDIUM") // CRITICAL, HIGH, MEDIUM, LOW
   penaltyAmountAED     Decimal?                 @db.Decimal(18, 4) // e.g. AED 10,000 for CT registration
   completionDate       DateTime?
   evidenceDocumentId   String?
+  notes                String?
+  resolvedById         String?
+  resolvedAt           DateTime?
+  resolutionNotes      String?
   createdAt            DateTime                 @default(now())
   updatedAt            DateTime                 @updatedAt
 
@@ -787,6 +866,55 @@ model ComplianceObligation {
   @@index([businessId, status])
   @@index([calculatedDueDate])
   @@map("compliance_obligations")
+}
+
+model GeneratedReport {
+  id               String       @id @default(uuid())
+  organisationId   String
+  businessId       String
+  reportType       ReportType
+  format           ReportFormat @default(PDF)
+  title            String
+  periodStart      DateTime?
+  periodEnd        DateTime?
+  status           ReportStatus @default(READY)
+  fileUrl          String?
+  fileSizeBytes    Int?
+  summaryMetrics   Json?        // Aggregated financial figures (revenue, expenses, net profit, tax, etc.)
+  parametersJson   Json?        // User filter/generation options
+  generatedById    String?
+  generatedAt      DateTime     @default(now())
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  business         Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, reportType])
+  @@index([businessId, createdAt])
+  @@map("generated_reports")
+}
+
+model TaxReadinessSnapshot {
+  id                   String   @id @default(uuid())
+  businessId           String
+  overallScore         Int      // 0 - 100
+  corporateTaxScore    Int      // 0 - 100
+  vatScore             Int      // 0 - 100
+  bookkeepingScore     Int      // 0 - 100
+  complianceScore      Int      // 0 - 100
+  profileScore         Int      // 0 - 100
+  categoryScoresJson   Json     // Breakdown of category scores & weightings
+  missingItems         String[] @default([])
+  actionableSteps      String[] @default([])
+  criticalBlockers     String[] @default([])
+  metadata             Json?
+  evaluatedAt          DateTime @default(now())
+  createdAt            DateTime @default(now())
+
+  business             Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, evaluatedAt])
+  @@map("tax_readiness_snapshots")
 }
 
 model ComplianceNotification {
@@ -823,6 +951,7 @@ model Document {
   ocrRawJson       Json?                    // Full native cloud OCR output
   reviewedById     String?
   reviewedAt       DateTime?
+  fileHash         String?
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
 

@@ -1,14 +1,21 @@
 // ============================================================================
 // Mizan (ميزان) - Business Multi-Entity Context
-// Manages active business entity switching across Mainland LLC, Free Zone, Freelance
+// Manages active business entity switching, tenant sync, authenticated user profile
 // ============================================================================
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import * as Haptics from 'expo-haptics';
-import { MizanApi } from '../services/api';
+import {
+  MizanApi,
+  SaveTradeLicensePayload,
+  STORAGE_KEY_AUTH_TOKEN,
+  STORAGE_KEY_USER_PROFILE,
+} from '../services/api';
+import { AppStorage } from '../utils/storage';
 
 export interface BusinessEntity {
   id: string;
+  organisationId?: string;
   legalName: string;
   tradeName?: string;
   legalEntityType: string;
@@ -25,115 +32,274 @@ export interface BusinessEntity {
   isSbrEligible: boolean;
   isQfzpEligible: boolean;
   verificationStatus: string;
+  address?: string;
+  businessActivities?: string[];
   icon?: string;
 }
 
-const DEFAULT_BUSINESSES: BusinessEntity[] = [
-  {
-    id: 'biz-1234567',
-    legalName: 'Al Nahda Trading LLC',
-    tradeName: 'Al Nahda Trading',
-    legalEntityType: 'LLC',
-    jurisdictionType: 'MAINLAND',
-    licensingAuthority: 'Department of Economy and Tourism (DET)',
-    emirate: 'Dubai',
-    tradeLicenseNumber: '1234567',
-    issueDate: '2024-01-15',
-    expiryDate: '2027-01-15',
-    vatTrn: '100234567800003',
-    corporateTaxTrn: 'CT-1002345678',
-    annualRevenueEstimateAED: 1200000,
-    taxRegime: 'Mainland LLC • SBR Eligible (0% up to AED 3M)',
-    isSbrEligible: true,
-    isQfzpEligible: false,
-    verificationStatus: 'REGISTRY_VERIFIED',
-    icon: '🏢',
-  },
-  {
-    id: 'biz-fz-892144',
-    legalName: 'Desert Cloud Solutions FZE',
-    tradeName: 'Desert Cloud',
-    legalEntityType: 'FREE_ZONE_ESTABLISHMENT',
-    jurisdictionType: 'FREE_ZONE',
-    licensingAuthority: 'Dubai Multi Commodities Centre (DMCC)',
-    emirate: 'Dubai',
-    tradeLicenseNumber: 'FZ-892144',
-    issueDate: '2023-09-01',
-    expiryDate: '2026-09-01',
-    vatTrn: '100987654300001',
-    corporateTaxTrn: 'CT-2009876543',
-    annualRevenueEstimateAED: 4800000,
-    taxRegime: 'Qualifying Free Zone Person (0% on Qualifying Income)',
-    isSbrEligible: false,
-    isQfzpEligible: true,
-    verificationStatus: 'REGISTRY_VERIFIED',
-    icon: '🌐',
-  },
-  {
-    id: 'biz-fl-440912',
-    legalName: 'Hamza Al Mansoori (Tech & Design Consulting)',
-    tradeName: 'Hamza Consulting',
-    legalEntityType: 'NATURAL_PERSON',
-    jurisdictionType: 'MAINLAND',
-    licensingAuthority: 'Abu Dhabi Department of Economic Development (ADDED)',
-    emirate: 'Abu Dhabi',
-    tradeLicenseNumber: 'FL-440912',
-    issueDate: '2024-03-10',
-    expiryDate: '2027-03-10',
-    vatTrn: 'NOT_REGISTERED',
-    corporateTaxTrn: 'EXEMPT_CABINET_DEC_49',
-    annualRevenueEstimateAED: 420000,
-    taxRegime: 'Natural Person Freelance (< AED 1M exempt under CD 49/2023)',
-    isSbrEligible: true,
-    isQfzpEligible: false,
-    verificationStatus: 'OCR_EXTRACTED',
-    icon: '👤',
-  },
-];
+export interface UserProfile {
+  id: string;
+  email: string;
+  fullName: string;
+  phone?: string | null;
+  role?: string;
+  organisationName?: string;
+}
+
+const STORAGE_KEY_ACTIVE_BIZ = 'mizan_active_business_id';
+const STORAGE_KEY_USER_KEY = 'mizan_current_user_key';
 
 interface BusinessContextType {
   businesses: BusinessEntity[];
-  activeBusiness: BusinessEntity;
+  activeBusiness: BusinessEntity | null;
+  currentUser: UserProfile | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  error: string | null;
+  currentUserKey: 'user-a' | 'user-b' | 'superadmin';
   setActiveBusinessId: (id: string) => void;
+  addOrUpdateBusiness: (entity: Partial<BusinessEntity>) => Promise<BusinessEntity>;
   refreshBusinesses: () => Promise<void>;
+  switchTenantUser: (userKey: 'user-a' | 'user-b' | 'superadmin') => Promise<void>;
+  logout: () => Promise<void>;
+  loadUserProfile: () => Promise<UserProfile | null>;
 }
 
 const BusinessContext = createContext<BusinessContextType | undefined>(undefined);
 
 export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [businesses, setBusinesses] = useState<BusinessEntity[]>(DEFAULT_BUSINESSES);
-  const [activeBusinessId, setActiveBusinessIdState] = useState<string>('biz-1234567');
+  const [businesses, setBusinesses] = useState<BusinessEntity[]>([]);
+  const [activeBusinessId, setActiveBusinessIdState] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [currentUserKey, setCurrentUserKey] = useState<'user-a' | 'user-b' | 'superadmin'>('user-a');
 
-  const fetchBusinesses = async () => {
+  /**
+   * Loads current authenticated user profile
+   */
+  const loadUserProfile = useCallback(async (): Promise<UserProfile | null> => {
     try {
-      const data = await MizanApi.getBusinesses();
-      if (Array.isArray(data) && data.length > 0) {
-        setBusinesses(data);
+      const storedProfileStr = await AppStorage.getItem(STORAGE_KEY_USER_PROFILE);
+      if (storedProfileStr) {
+        try {
+          const parsed = JSON.parse(storedProfileStr);
+          setCurrentUser(parsed);
+          setIsAuthenticated(true);
+        } catch {}
       }
-    } catch {
-      // Retain defaults if server unreachable
-    }
-  };
 
-  useEffect(() => {
-    fetchBusinesses();
+      const res = await MizanApi.getProfile();
+      if (res?.user) {
+        const profile: UserProfile = {
+          id: res.user.id,
+          email: res.user.email,
+          fullName: res.user.fullName,
+          phone: res.user.phone,
+          role: res.activeOrganisation?.role || 'ADMIN',
+          organisationName: res.activeOrganisation?.name,
+        };
+        setCurrentUser(profile);
+        setIsAuthenticated(true);
+        await AppStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(profile));
+        return profile;
+      }
+    } catch (err: any) {
+      // If unauthorized, clear state
+      if (err?.message?.includes('401') || err?.message?.includes('Unauthorized')) {
+        setIsAuthenticated(false);
+        setCurrentUser(null);
+      }
+    }
+    return null;
   }, []);
 
-  const setActiveBusinessId = (id: string) => {
-    setActiveBusinessIdState(id);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
+  /**
+   * Fetches businesses strictly for the authenticated tenant session
+   */
+  const fetchBusinesses = useCallback(async (userKey: 'user-a' | 'user-b' | 'superadmin' = currentUserKey) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const hasStoredToken = await AppStorage.getItem(STORAGE_KEY_AUTH_TOKEN);
+      if (hasStoredToken) {
+        await MizanApi.ensureAuthenticated();
+        await loadUserProfile();
+      } else {
+        await MizanApi.ensureAuthenticated(userKey);
+      }
 
-  const activeBusiness =
-    businesses.find((b) => b.id === activeBusinessId) || businesses[0] || DEFAULT_BUSINESSES[0];
+      const data = await MizanApi.getBusinesses();
+
+      const mapped: BusinessEntity[] = (data || []).map((b: any) => ({
+        id: b.id || `biz-${b.tradeLicenseNumber}`,
+        organisationId: b.organisationId,
+        legalName: b.legalName || 'Unnamed Business',
+        tradeName: b.tradeName || b.legalName,
+        legalEntityType: b.legalEntityType || 'LLC',
+        jurisdictionType: b.jurisdictionType || 'MAINLAND',
+        licensingAuthority: b.licensingAuthority || 'Department of Economy and Tourism (DET)',
+        emirate: b.emirate || 'Dubai',
+        tradeLicenseNumber: b.tradeLicenseNumber || '',
+        issueDate: b.issueDate,
+        expiryDate: b.expiryDate,
+        vatTrn: b.vatTrn,
+        corporateTaxTrn: b.corporateTaxTrn,
+        annualRevenueEstimateAED: b.annualRevenueEstimateAED ?? 1200000,
+        taxRegime: b.taxRegime || 'Mainland LLC • SBR Eligible (0% up to AED 3M)',
+        isSbrEligible: b.isSbrEligible ?? true,
+        isQfzpEligible: b.isQfzpEligible ?? false,
+        verificationStatus: b.verificationStatus || 'OCR_EXTRACTED',
+        address: b.address,
+        businessActivities: b.businessActivities || [],
+        icon: b.legalEntityType === 'NATURAL_PERSON' ? 'person-outline' : b.jurisdictionType === 'FREE_ZONE' ? 'globe-outline' : 'business-outline',
+      }));
+
+      setBusinesses(mapped);
+
+      // Restore or validate active business
+      const storedActiveId = await AppStorage.getItem(STORAGE_KEY_ACTIVE_BIZ);
+      const isValidStored = storedActiveId && mapped.some((b) => b.id === storedActiveId);
+
+      if (isValidStored) {
+        setActiveBusinessIdState(storedActiveId);
+      } else if (mapped.length > 0) {
+        setActiveBusinessIdState(mapped[0].id);
+        await AppStorage.setItem(STORAGE_KEY_ACTIVE_BIZ, mapped[0].id);
+      } else {
+        setActiveBusinessIdState(null);
+      }
+    } catch (err: any) {
+      console.warn('Failed to load businesses from backend:', err?.message || err);
+      setError(err?.message || 'Failed to connect to Mizan business service');
+      setBusinesses([]);
+      setActiveBusinessIdState(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentUserKey, loadUserProfile]);
+
+  useEffect(() => {
+    (async () => {
+      const savedUserKey = (await AppStorage.getItem(STORAGE_KEY_USER_KEY)) as any;
+      const initialKey = savedUserKey === 'user-b' || savedUserKey === 'superadmin' ? savedUserKey : 'user-a';
+      setCurrentUserKey(initialKey);
+      await fetchBusinesses(initialKey);
+    })();
+  }, []);
+
+  const setActiveBusinessId = useCallback((id: string) => {
+    const exists = businesses.some((b) => b.id === id);
+    if (exists) {
+      setActiveBusinessIdState(id);
+      AppStorage.setItem(STORAGE_KEY_ACTIVE_BIZ, id).catch(() => {});
+      Haptics.selectionAsync().catch(() => {});
+    }
+  }, [businesses]);
+
+  const addOrUpdateBusiness = useCallback(async (entity: Partial<BusinessEntity>): Promise<BusinessEntity> => {
+    setIsLoading(true);
+    try {
+      const payload: SaveTradeLicensePayload = {
+        tradeLicenseNumber: entity.tradeLicenseNumber || `TL-${Date.now().toString().slice(-6)}`,
+        legalName: entity.legalName || 'New Venture LLC',
+        tradeName: entity.tradeName || entity.legalName,
+        legalEntityType: (entity.legalEntityType as any) || 'LLC',
+        jurisdictionType: (entity.jurisdictionType as any) || 'MAINLAND',
+        licensingAuthority: entity.licensingAuthority || 'Department of Economy and Tourism (DET)',
+        emirate: entity.emirate || 'Dubai',
+        annualRevenueEstimateAED: entity.annualRevenueEstimateAED || 0,
+        vatTrn: entity.vatTrn,
+        corporateTaxTrn: entity.corporateTaxTrn,
+        address: entity.address,
+        businessActivities: entity.businessActivities || [],
+        issueDate: entity.issueDate,
+        expiryDate: entity.expiryDate,
+      };
+
+      const backendSaved = await MizanApi.saveTradeLicense(payload);
+
+      const savedBusiness: BusinessEntity = {
+        id: backendSaved.id,
+        organisationId: backendSaved.organisationId,
+        legalName: backendSaved.legalName,
+        tradeName: backendSaved.tradeName || backendSaved.legalName,
+        legalEntityType: backendSaved.legalEntityType,
+        jurisdictionType: backendSaved.jurisdictionType,
+        licensingAuthority: backendSaved.licensingAuthority,
+        emirate: backendSaved.emirate,
+        tradeLicenseNumber: backendSaved.tradeLicenseNumber,
+        issueDate: backendSaved.issueDate,
+        expiryDate: backendSaved.expiryDate,
+        vatTrn: backendSaved.vatTrn,
+        corporateTaxTrn: backendSaved.corporateTaxTrn,
+        annualRevenueEstimateAED: backendSaved.annualRevenueEstimateAED ?? 0,
+        taxRegime: backendSaved.taxRegime || 'Standard UAE Tax Regime',
+        isSbrEligible: backendSaved.isSbrEligible ?? true,
+        isQfzpEligible: backendSaved.isQfzpEligible ?? false,
+        verificationStatus: backendSaved.verificationStatus || 'VERIFIED',
+        address: backendSaved.address,
+        businessActivities: backendSaved.businessActivities || [],
+        icon: 'business-outline',
+      };
+
+      setBusinesses((prev) => {
+        const filtered = prev.filter((b) => b.id !== savedBusiness.id);
+        return [savedBusiness, ...filtered];
+      });
+
+      setActiveBusinessIdState(savedBusiness.id);
+      await AppStorage.setItem(STORAGE_KEY_ACTIVE_BIZ, savedBusiness.id);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      return savedBusiness;
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save trade license');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const refreshBusinesses = useCallback(async () => {
+    await fetchBusinesses();
+  }, [fetchBusinesses]);
+
+  const switchTenantUser = useCallback(async (userKey: 'user-a' | 'user-b' | 'superadmin') => {
+    setCurrentUserKey(userKey);
+    await AppStorage.setItem(STORAGE_KEY_USER_KEY, userKey);
+    await MizanApi.initSession(userKey);
+    await fetchBusinesses(userKey);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+  }, [fetchBusinesses]);
+
+  const logout = useCallback(async () => {
+    await MizanApi.logout();
+    setBusinesses([]);
+    setActiveBusinessIdState(null);
+    setCurrentUser(null);
+    setIsAuthenticated(false);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  }, []);
+
+  const activeBusiness = businesses.find((b) => b.id === activeBusinessId) || businesses[0] || null;
 
   return (
     <BusinessContext.Provider
       value={{
         businesses,
         activeBusiness,
+        currentUser,
+        isAuthenticated,
+        isLoading,
+        error,
+        currentUserKey,
         setActiveBusinessId,
-        refreshBusinesses: fetchBusinesses,
+        addOrUpdateBusiness,
+        refreshBusinesses,
+        switchTenantUser,
+        logout,
+        loadUserProfile,
       }}
     >
       {children}
@@ -141,7 +307,7 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   );
 };
 
-export const useBusiness = (): BusinessContextType => {
+export const useBusiness = () => {
   const context = useContext(BusinessContext);
   if (!context) {
     throw new Error('useBusiness must be used within a BusinessProvider');
