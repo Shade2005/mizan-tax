@@ -11,10 +11,22 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private readonly logger = new Logger(PrismaService.name);
 
   constructor() {
-    if (!process.env.DATABASE_URL && process.env.DATABASE_URL_UNPOOLED) {
-      process.env.DATABASE_URL = process.env.DATABASE_URL_UNPOOLED;
+    let url = process.env.DATABASE_URL || process.env.DATABASE_URL_UNPOOLED || '';
+    if (url && url.includes('.neon.tech') && !url.includes('-pooler.')) {
+      url = url.replace('.c-', '-pooler.c-');
     }
-    super();
+    if (url) {
+      process.env.DATABASE_URL = url;
+    }
+    super(
+      url
+        ? {
+            datasources: {
+              db: { url },
+            },
+          }
+        : undefined
+    );
   }
 
   async onModuleInit() {

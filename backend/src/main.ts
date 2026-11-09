@@ -17,6 +17,11 @@ if (!process.env.DATABASE_URL && process.env.DATABASE_URL_UNPOOLED) {
   process.env.DATABASE_URL = process.env.DATABASE_URL_UNPOOLED;
 }
 
+// In cloud/serverless environments (Render/AWS), ensure Neon connections use the pooled endpoint (-pooler)
+if (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('.neon.tech') && !process.env.DATABASE_URL.includes('-pooler.')) {
+  process.env.DATABASE_URL = process.env.DATABASE_URL.replace('.c-', '-pooler.c-');
+}
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
