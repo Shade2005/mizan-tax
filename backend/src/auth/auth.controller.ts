@@ -86,14 +86,22 @@ export class AuthController {
   @Get('health')
   @ApiOperation({ summary: 'Public Health check and environment probe' })
   healthCheck() {
+    let dbHost = null;
+    try {
+      if (process.env.DATABASE_URL) {
+        const u = new URL(process.env.DATABASE_URL);
+        dbHost = u.host;
+      }
+    } catch {}
+
     return {
       status: 'ok',
       hasDatabaseUrl: !!process.env.DATABASE_URL,
-      databaseUrlPrefix: process.env.DATABASE_URL ? process.env.DATABASE_URL.substring(0, 15) + '...' : null,
+      databaseHost: dbHost,
       hasDirectUrl: !!process.env.DATABASE_URL_UNPOOLED,
       hasJwtSecret: !!process.env.JWT_SECRET,
       nodeEnv: process.env.NODE_ENV || 'development',
-      version: '1.0.2',
+      version: '1.0.3',
       timestamp: new Date().toISOString(),
     };
   }
