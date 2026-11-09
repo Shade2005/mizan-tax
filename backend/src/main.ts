@@ -12,6 +12,11 @@ try {
   }
 } catch {}
 
+// If DATABASE_URL_UNPOOLED is present but DATABASE_URL is not, bridge them
+if (!process.env.DATABASE_URL && process.env.DATABASE_URL_UNPOOLED) {
+  process.env.DATABASE_URL = process.env.DATABASE_URL_UNPOOLED;
+}
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';

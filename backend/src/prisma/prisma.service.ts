@@ -11,6 +11,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private readonly logger = new Logger(PrismaService.name);
 
   constructor() {
+    if (!process.env.DATABASE_URL && process.env.DATABASE_URL_UNPOOLED) {
+      process.env.DATABASE_URL = process.env.DATABASE_URL_UNPOOLED;
+    }
     super();
   }
 
