@@ -5,6 +5,14 @@
 
 import { Platform } from 'react-native';
 import { AppStorage } from '../utils/storage';
+import {
+  auth,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  updateProfile,
+  sendPasswordResetEmail,
+} from './firebase';
 
 export const STORAGE_KEY_AUTH_TOKEN = 'mizan_auth_token';
 export const STORAGE_KEY_ORG_ID = 'mizan_organisation_id';
@@ -110,52 +118,92 @@ export class MizanApi {
     phone?: string;
     organisationName?: string;
   }): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/api/v1/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.message || 'Registration failed. Please check your details.');
+    // 1. Create account in Firebase Auth
+    const userCred = await createUserWithEmailAndPassword(auth, payload.email.trim(), payload.password);
+    if (payload.fullName) {
+      try {
+        await updateProfile(userCred.user, { displayName: payload.fullName.trim() });
+      } catch {}
     }
-    if (data.accessToken) {
-      this.setAuthToken(data.accessToken, data.organisation?.id);
-      await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, data.accessToken);
-      if (data.organisation?.id) {
-        await AppStorage.setItem(STORAGE_KEY_ORG_ID, data.organisation.id);
+    const idToken = await userCred.user.getIdToken();
+    this.setAuthToken(idToken);
+    await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, idToken);
+
+    // 2. Synchronize account with PostgreSQL backend
+    try {
+      const syncRes = await fetch(`${API_BASE_URL}/api/v1/auth/sync`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+      });
+      if (syncRes.ok) {
+        const data = await syncRes.json();
+        if (data.activeOrganisation?.id) {
+          this.setAuthToken(idToken, data.activeOrganisation.id);
+          await AppStorage.setItem(STORAGE_KEY_ORG_ID, data.activeOrganisation.id);
+        }
+        if (data.user) {
+          await AppStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(data.user));
+        }
+        return data;
       }
-      if (data.user) {
-        await AppStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(data.user));
-      }
+    } catch (syncErr) {
+      console.warn('Backend user synchronization deferred:', syncErr);
     }
-    return data;
+
+    const fallbackUser = {
+      id: userCred.user.uid,
+      email: userCred.user.email,
+      fullName: payload.fullName || userCred.user.displayName || 'Taxpayer',
+    };
+    await AppStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(fallbackUser));
+    return { user: fallbackUser, accessToken: idToken };
   }
 
   public static async login(payload: { email: string; password: string }): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.message || 'Invalid email or password');
-    }
-    if (data.accessToken) {
-      this.setAuthToken(data.accessToken, data.organisation?.id);
-      await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, data.accessToken);
-      if (data.organisation?.id) {
-        await AppStorage.setItem(STORAGE_KEY_ORG_ID, data.organisation.id);
+    // 1. Authenticate with Firebase Auth
+    const userCred = await signInWithEmailAndPassword(auth, payload.email.trim(), payload.password);
+    const idToken = await userCred.user.getIdToken();
+    this.setAuthToken(idToken);
+    await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, idToken);
+
+    // 2. Synchronize profile and active organisation with PostgreSQL backend
+    try {
+      const syncRes = await fetch(`${API_BASE_URL}/api/v1/auth/sync`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+      });
+      if (syncRes.ok) {
+        const data = await syncRes.json();
+        if (data.activeOrganisation?.id) {
+          this.setAuthToken(idToken, data.activeOrganisation.id);
+          await AppStorage.setItem(STORAGE_KEY_ORG_ID, data.activeOrganisation.id);
+        }
+        if (data.user) {
+          await AppStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(data.user));
+        }
+        return data;
       }
-      if (data.user) {
-        await AppStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(data.user));
-      }
+    } catch (syncErr) {
+      console.warn('Backend user profile synchronization deferred:', syncErr);
     }
-    return data;
+
+    const fallbackUser = {
+      id: userCred.user.uid,
+      email: userCred.user.email,
+      fullName: userCred.user.displayName || 'Taxpayer',
+    };
+    await AppStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(fallbackUser));
+    return { user: fallbackUser, accessToken: idToken };
+  }
+
+  public static async sendPasswordReset(email: string): Promise<void> {
+    await sendPasswordResetEmail(auth, email.trim());
   }
 
   public static async logout(): Promise<void> {
+    try {
+      await signOut(auth);
+    } catch {}
     currentAuthToken = null;
     currentOrganisationId = '';
     await AppStorage.removeItem(STORAGE_KEY_AUTH_TOKEN);
@@ -234,6 +282,16 @@ export class MizanApi {
    * Guarantees an active authentication session before executing privileged API calls
    */
   public static async ensureAuthenticated(userKey: 'user-a' | 'user-b' | 'superadmin' = 'user-a'): Promise<string> {
+    if (auth.currentUser) {
+      try {
+        const freshToken = await auth.currentUser.getIdToken();
+        if (freshToken) {
+          currentAuthToken = freshToken;
+          await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, freshToken);
+          return freshToken;
+        }
+      } catch {}
+    }
     if (currentAuthToken) return currentAuthToken;
     const restored = await this.loadStoredSession();
     if (restored && currentAuthToken) return currentAuthToken;

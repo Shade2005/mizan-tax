@@ -19,6 +19,8 @@ import {
   Linking,
   Modal,
   ActivityIndicator,
+  Share,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from '../../src/components/SafeAreaView';
 import { useRouter } from 'expo-router';
@@ -475,10 +477,39 @@ export default function GroundedChatScreen() {
                           >
                             <Ionicons name="information-circle-outline" size={14} color={colors.brand.primary} />
                           </TouchableOpacity>
-                          <TouchableOpacity style={styles.actionIconBtn}>
+                          <TouchableOpacity
+                            style={styles.actionIconBtn}
+                            onPress={() => {
+                              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+                              const citeText = msg.sources?.map((s) => `• ${s.title}`).join('\n') || '';
+                              Alert.alert(
+                                'Legal Summary Ready',
+                                `${msg.text.slice(0, 220)}${msg.text.length > 220 ? '...' : ''}\n\n${citeText}`,
+                                [
+                                  {
+                                    text: 'Share / Copy Text',
+                                    onPress: () =>
+                                      Share.share({
+                                        message: `Mizan Tax AI Consultation:\n\n${msg.text}\n\nSources:\n${citeText}`,
+                                      }),
+                                  },
+                                  { text: 'Close', style: 'cancel' },
+                                ]
+                              );
+                            }}
+                          >
                             <Ionicons name="copy-outline" size={14} color={colors.neutral.textTertiary} />
                           </TouchableOpacity>
-                          <TouchableOpacity style={styles.actionIconBtn}>
+                          <TouchableOpacity
+                            style={styles.actionIconBtn}
+                            onPress={() => {
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                              const citeText = msg.sources?.map((s) => `• ${s.title}`).join('\n') || '';
+                              Share.share({
+                                message: `Mizan Tax AI Consultation:\n\n${msg.text}\n\n${citeText}`,
+                              }).catch(() => {});
+                            }}
+                          >
                             <Ionicons name="share-outline" size={14} color={colors.neutral.textTertiary} />
                           </TouchableOpacity>
                           <Text style={styles.msgTimestamp}>{msg.timestamp}</Text>

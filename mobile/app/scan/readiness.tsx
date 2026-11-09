@@ -105,10 +105,10 @@ export default function TaxReadinessAssessmentScreen() {
           ) : (
             <TouchableOpacity
               style={styles.headerIconBtn}
-              onPress={() => {}}
+              onPress={() => router.push('/scan/report')}
               activeOpacity={0.7}
             >
-              <Ionicons name="notifications-outline" size={20} color={colors.neutral.textPrimary} />
+              <Ionicons name="document-text-outline" size={20} color={colors.neutral.textPrimary} />
             </TouchableOpacity>
           )}
         </View>
@@ -627,7 +627,11 @@ export default function TaxReadinessAssessmentScreen() {
               <View style={styles.itemDivider} />
 
               {/* Finding 3 */}
-              <View style={styles.findingRow}>
+              <TouchableOpacity
+                style={styles.findingRow}
+                activeOpacity={0.7}
+                onPress={() => router.push('/(tabs)/tax')}
+              >
                 <View style={[styles.findingIconSquare, { backgroundColor: '#ECFDF5' }]}>
                   <Ionicons name="checkmark" size={18} color={colors.semantic.successDark} />
                 </View>
@@ -636,11 +640,15 @@ export default function TaxReadinessAssessmentScreen() {
                   <Text style={styles.findingDesc}>Based on your inputs, you are within compliance.</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={16} color={colors.neutral.textTertiary} />
-              </View>
+              </TouchableOpacity>
               <View style={styles.itemDivider} />
 
               {/* Finding 4 */}
-              <View style={styles.findingRow}>
+              <TouchableOpacity
+                style={styles.findingRow}
+                activeOpacity={0.7}
+                onPress={() => router.push('/(tabs)/tax')}
+              >
                 <View style={[styles.findingIconSquare, { backgroundColor: '#ECFDF5' }]}>
                   <Ionicons name="checkmark" size={18} color={colors.semantic.successDark} />
                 </View>
@@ -649,7 +657,7 @@ export default function TaxReadinessAssessmentScreen() {
                   <Text style={styles.findingDesc}>You are eligible for SBR for the current tax period.</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={16} color={colors.neutral.textTertiary} />
-              </View>
+              </TouchableOpacity>
             </View>
 
             {/* Recommended Next Steps Card */}

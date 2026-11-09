@@ -45,6 +45,14 @@ export default function TaxScreen() {
   // Period Selectors
   const [selectedFY, setSelectedFY] = useState<number>(2026);
   const [selectedVatPeriod, setSelectedVatPeriod] = useState<string>('2026-M11');
+  const [periodModalVisible, setPeriodModalVisible] = useState<boolean>(false);
+
+  const vatPeriodDates: Record<string, { start: string; end: string; label: string }> = {
+    '2026-M11': { start: '2026-11-01', end: '2026-11-30', label: 'Nov 2026 (Monthly)' },
+    '2026-M10': { start: '2026-10-01', end: '2026-10-31', label: 'Oct 2026 (Monthly)' },
+    '2026-Q4': { start: '2026-10-01', end: '2026-12-31', label: 'Q4 2026 (Oct – Dec)' },
+    '2026-Q3': { start: '2026-07-01', end: '2026-09-30', label: 'Q3 2026 (Jul – Sep)' },
+  };
 
   // Grounded AI Question Modal
   const [aiModalVisible, setAiModalVisible] = useState<boolean>(false);
@@ -61,12 +69,13 @@ export default function TaxScreen() {
 
     try {
       setLoading(true);
-      // 1. Fetch VAT Assessment (Nov 2026)
+      const pInfo = vatPeriodDates[selectedVatPeriod] || vatPeriodDates['2026-M11'];
+      // 1. Fetch VAT Assessment for selected period
       const vat = await MizanApi.assessBusinessVat({
         businessId: activeBusiness.id,
         periodKey: selectedVatPeriod,
-        startDate: '2026-11-01',
-        endDate: '2026-11-30',
+        startDate: pInfo.start,
+        endDate: pInfo.end,
       }).catch((err) => {
         console.warn('VAT assessment fetch note:', err.message);
         return null;
@@ -257,6 +266,35 @@ export default function TaxScreen() {
           })}
         </ScrollView>
 
+        {/* Interactive Tax Period & FY Selector Bar */}
+        <TouchableOpacity
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            backgroundColor: colors.neutral.surface,
+            paddingHorizontal: spacing.md,
+            paddingVertical: 10,
+            borderRadius: radii.md,
+            borderWidth: 1,
+            borderColor: colors.neutral.border,
+            marginBottom: spacing.md,
+          }}
+          activeOpacity={0.75}
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            setPeriodModalVisible(true);
+          }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Ionicons name="calendar-outline" size={18} color={colors.brand.primary} />
+            <Text style={{ fontSize: 13, fontWeight: '700', color: colors.neutral.textPrimary }}>
+              Corporate Tax: FY {selectedFY} • VAT: {vatPeriodDates[selectedVatPeriod]?.label || selectedVatPeriod}
+            </Text>
+          </View>
+          <Ionicons name="chevron-down" size={18} color={colors.neutral.textPrimary} />
+        </TouchableOpacity>
+
         {loading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={colors.brand.primary} />
@@ -273,7 +311,7 @@ export default function TaxScreen() {
                 <ScreenSection index={0}>
                   <View style={styles.taxPositionCard}>
                     <View style={styles.positionHeaderRow}>
-                      <Text style={styles.positionYearLabel}>Active Position (FY 2026)</Text>
+                      <Text style={styles.positionYearLabel}>Active Position (FY {selectedFY})</Text>
                       <View style={[styles.compliantTag, complianceScore < 75 && { backgroundColor: '#FEF3C7' }]}>
                         <Text style={[styles.compliantTagText, complianceScore < 75 && { color: '#B45309' }]}>
                           {complianceScore >= 80 ? 'Compliant' : 'Needs Review'} ({complianceScore}%)
@@ -571,7 +609,9 @@ export default function TaxScreen() {
                     <Ionicons name="receipt" size={24} color={colors.brand.primary} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.ctHeaderTitle}>FTA VAT Return (Form 201)</Text>
-                      <Text style={styles.ctHeaderSub}>Period: {selectedVatPeriod} (Nov 1 – Nov 30, 2026)</Text>
+                      <Text style={styles.ctHeaderSub}>
+                        Period: {selectedVatPeriod} ({vatPeriodDates[selectedVatPeriod]?.label || '2026'})
+                      </Text>
                     </View>
                     <TouchableOpacity
                       onPress={() => handleReassess('VAT')}
@@ -809,6 +849,92 @@ export default function TaxScreen() {
               <Text style={styles.modalAskBtnText}>
                 {aiLoading ? 'Consulting...' : 'Ask Grounded AI'}
               </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Tax Period & Financial Year Selector Modal */}
+      <Modal visible={periodModalVisible} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Assessment Period</Text>
+              <TouchableOpacity onPress={() => setPeriodModalVisible(false)}>
+                <Ionicons name="close" size={22} color={colors.neutral.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSubtitle}>Corporate Tax Financial Year:</Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+              {[2026, 2025].map((fy) => {
+                const isSel = selectedFY === fy;
+                return (
+                  <TouchableOpacity
+                    key={fy}
+                    style={[
+                      styles.segmentPill,
+                      { flex: 1, alignItems: 'center' },
+                      isSel && styles.segmentPillActive,
+                    ]}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      setSelectedFY(fy);
+                    }}
+                  >
+                    <Text style={[styles.segmentPillText, isSel && styles.segmentPillTextActive]}>
+                      FY {fy}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={styles.modalSubtitle}>VAT Return Period (Form 201):</Text>
+            <View style={{ gap: 8, marginBottom: 16 }}>
+              {Object.entries(vatPeriodDates).map(([key, info]) => {
+                const isSel = selectedVatPeriod === key;
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingVertical: 12,
+                      paddingHorizontal: 14,
+                      borderRadius: radii.md,
+                      backgroundColor: isSel ? '#FFF8F4' : colors.neutral.canvas,
+                      borderWidth: 1,
+                      borderColor: isSel ? colors.brand.primary : colors.neutral.border,
+                    }}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      setSelectedVatPeriod(key);
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 13,
+                        fontWeight: isSel ? '800' : '600',
+                        color: isSel ? colors.brand.primary : colors.neutral.textPrimary,
+                      }}
+                    >
+                      {key} — {info.label}
+                    </Text>
+                    {isSel && (
+                      <Ionicons name="checkmark-circle" size={18} color={colors.brand.primary} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <TouchableOpacity
+              style={styles.modalAskBtn}
+              onPress={() => setPeriodModalVisible(false)}
+            >
+              <Text style={styles.modalAskBtnText}>Apply & Run Tax Engines</Text>
             </TouchableOpacity>
           </View>
         </View>

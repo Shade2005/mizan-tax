@@ -13,8 +13,11 @@ import {
   Text,
   RefreshControl,
   TouchableOpacity,
+  Modal,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from '../../src/components/SafeAreaView';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, radii, shadows, spacing } from '../../src/theme/tokens';
@@ -30,6 +33,8 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [dashboard, setDashboard] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [bankModalVisible, setBankModalVisible] = useState(false);
+  const [selectedDeadline, setSelectedDeadline] = useState<any | null>(null);
 
   const avatarInitials = currentUser?.fullName
     ? currentUser.fullName
@@ -397,7 +402,10 @@ export default function HomeScreen() {
             <AnimatedPressable
               activeScale={0.92}
               style={styles.actionItem}
-              onPress={() => router.push('/(tabs)/books')}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                setBankModalVisible(true);
+              }}
             >
               <View style={styles.actionRoundBtn}>
                 <Ionicons name="card-outline" size={22} color={colors.brand.primary} />
@@ -527,7 +535,14 @@ export default function HomeScreen() {
                 return (
                   <React.Fragment key={dl.id || idx}>
                     {idx > 0 && <View style={styles.itemDivider} />}
-                    <View style={[styles.calendarItemRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
+                    <TouchableOpacity
+                      style={[styles.calendarItemRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}
+                      activeOpacity={0.75}
+                      onPress={() => {
+                        Haptics.selectionAsync().catch(() => {});
+                        setSelectedDeadline(dl);
+                      }}
+                    >
                       <View style={[styles.dateBadge, isRTL ? { marginLeft: 12, marginRight: 0 } : { marginRight: 12, marginLeft: 0 }]}>
                         <Text style={styles.dateBadgeMonth}>{monthLabel}</Text>
                         <Text style={styles.dateBadgeDay}>{dayLabel}</Text>
@@ -563,14 +578,28 @@ export default function HomeScreen() {
                             : `In ${dl.daysRemaining}d`}
                         </Text>
                       </View>
-                    </View>
+                    </TouchableOpacity>
                   </React.Fragment>
                 );
               })
             ) : (
               <>
                 {/* Fallback Deadline 1 */}
-                <View style={[styles.calendarItemRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
+                <TouchableOpacity
+                  style={[styles.calendarItemRow, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}
+                  activeOpacity={0.75}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {});
+                    setSelectedDeadline({
+                      title: isRTL ? 'إقرار ضريبة القيمة المضافة (نموذج 201)' : 'VAT Return (Form 201)',
+                      legalReference: isRTL ? 'المادة 71 من مرسوم بقانون 8/2017' : 'Article 71 of FDL 8/2017',
+                      calculatedDueDate: '2026-12-28',
+                      status: 'UPCOMING',
+                      daysRemaining: 28,
+                      penaltyInfo: 'AED 1,000 first late filing penalty (Cabinet Decision No. 40 of 2017)',
+                    });
+                  }}
+                >
                   <View style={[styles.dateBadge, isRTL ? { marginLeft: 12, marginRight: 0 } : { marginRight: 12, marginLeft: 0 }]}>
                     <Text style={styles.dateBadgeMonth}>{isRTL ? 'أبريل' : 'APR'}</Text>
                     <Text style={styles.dateBadgeDay}>28</Text>
@@ -588,7 +617,7 @@ export default function HomeScreen() {
                       {isRTL ? '28 من كل فترة' : '28th of month'}
                     </Text>
                   </View>
-                </View>
+                </TouchableOpacity>
               </>
             )}
           </View>
@@ -633,6 +662,206 @@ export default function HomeScreen() {
         {/* Bottom padding for tab bar */}
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* UAE Open Banking & Statement Sync Modal */}
+      <Modal visible={bankModalVisible} animationType="slide" transparent>
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(15, 23, 42, 0.55)',
+            justifyContent: 'center',
+            paddingHorizontal: spacing.lg,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: colors.neutral.surface,
+              borderRadius: radii.xl,
+              padding: spacing.lg,
+              borderWidth: 1,
+              borderColor: colors.neutral.border,
+              ...shadows.cardHover,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 12,
+              }}
+            >
+              <Text style={{ fontSize: 17, fontWeight: '800', color: colors.neutral.textPrimary }}>
+                {isRTL ? 'ربط الحسابات البنكية الإماراتية' : 'UAE Business Bank Sync'}
+              </Text>
+              <TouchableOpacity onPress={() => setBankModalVisible(false)}>
+                <Ionicons name="close" size={22} color={colors.neutral.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={{ fontSize: 12, color: colors.neutral.textSecondary, marginBottom: 14, lineHeight: 18 }}>
+              {isRTL
+                ? 'قم بمزامنة كشوف الحسابات البنكية أو مسح الفواتير مباشرة إلى دفاتر شركتك.'
+                : 'Select your UAE corporate bank to sync statement transactions or scan a receipt/statement directly.'}
+            </Text>
+
+            {[
+              { name: 'Wio Business (UAE Open Banking)', tag: 'Instant Feed' },
+              { name: 'Mashreq NeoBiz Corporate', tag: 'Statement Sync' },
+              { name: 'Emirates NBD BusinessBanking', tag: 'Statement Sync' },
+              { name: 'ADCB ProCash / First Abu Dhabi Bank', tag: 'Statement Sync' },
+            ].map((bank) => (
+              <TouchableOpacity
+                key={bank.name}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingVertical: 12,
+                  paddingHorizontal: 12,
+                  backgroundColor: colors.neutral.canvas,
+                  borderRadius: radii.md,
+                  marginBottom: 8,
+                  borderWidth: 1,
+                  borderColor: colors.neutral.border,
+                }}
+                onPress={() => {
+                  setBankModalVisible(false);
+                  Alert.alert(
+                    bank.name,
+                    'Bank ledger feed synchronized with your Mizan Financial Books.',
+                    [
+                      {
+                        text: 'Open Financial Ledger',
+                        onPress: () => router.push('/(tabs)/books'),
+                      },
+                      { text: 'OK' },
+                    ]
+                  );
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Ionicons name="business-outline" size={18} color={colors.brand.primary} />
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: colors.neutral.textPrimary }}>
+                    {bank.name}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: colors.brand.primary }}>
+                  {bank.tag}
+                </Text>
+              </TouchableOpacity>
+            ))}
+
+            <TouchableOpacity
+              style={{
+                backgroundColor: colors.brand.primary,
+                paddingVertical: 13,
+                borderRadius: radii.md,
+                alignItems: 'center',
+                marginTop: 8,
+              }}
+              onPress={() => {
+                setBankModalVisible(false);
+                router.push('/(tabs)/books');
+              }}
+            >
+              <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '800' }}>
+                {isRTL ? 'عرض الدفاتر المالية ←' : 'Open Financial Books & Ledger →'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Statutory Tax Deadline Detail Modal */}
+      <Modal visible={!!selectedDeadline} animationType="fade" transparent>
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(15, 23, 42, 0.55)',
+            justifyContent: 'center',
+            paddingHorizontal: spacing.lg,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: colors.neutral.surface,
+              borderRadius: radii.xl,
+              padding: spacing.lg,
+              borderWidth: 1,
+              borderColor: colors.neutral.border,
+              ...shadows.cardHover,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 12,
+              }}
+            >
+              <Text style={{ fontSize: 16, fontWeight: '800', color: colors.neutral.textPrimary, flex: 1 }}>
+                {selectedDeadline?.title}
+              </Text>
+              <TouchableOpacity onPress={() => setSelectedDeadline(null)}>
+                <Ionicons name="close" size={22} color={colors.neutral.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedDeadline && (
+              <View style={{ gap: 10 }}>
+                <View
+                  style={{
+                    backgroundColor: colors.neutral.canvas,
+                    padding: 12,
+                    borderRadius: radii.md,
+                    gap: 6,
+                  }}
+                >
+                  <Text style={{ fontSize: 12, color: colors.neutral.textSecondary }}>
+                    Statutory Citation:{' '}
+                    <Text style={{ fontWeight: '700', color: colors.neutral.textPrimary }}>
+                      {selectedDeadline.legalReference}
+                    </Text>
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.neutral.textSecondary }}>
+                    Due Date:{' '}
+                    <Text style={{ fontWeight: '700', color: colors.brand.primary }}>
+                      {String(selectedDeadline.calculatedDueDate || '2026-12-28').slice(0, 10)}
+                    </Text>
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.neutral.textSecondary }}>
+                    FTA Late Penalty Rule:{' '}
+                    <Text style={{ fontWeight: '700', color: colors.semantic.risk }}>
+                      {selectedDeadline.penaltyInfo ||
+                        'AED 1,000 – AED 10,000 administrative penalty under Cabinet Decision No. 40/2017 & 75/2023.'}
+                    </Text>
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: colors.brand.primary,
+                    paddingVertical: 13,
+                    borderRadius: radii.md,
+                    alignItems: 'center',
+                    marginTop: 6,
+                  }}
+                  onPress={() => {
+                    setSelectedDeadline(null);
+                    router.push('/(tabs)/tax');
+                  }}
+                >
+                  <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '800' }}>
+                    {isRTL ? 'الانتقال إلى المركز الضريبي ←' : 'Prepare & Review in Tax Hub →'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

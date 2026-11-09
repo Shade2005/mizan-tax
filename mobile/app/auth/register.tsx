@@ -38,6 +38,21 @@ export default function RegisterScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const getFirebaseAuthErrorMessage = (code: string, isRTL: boolean): string => {
+    switch (code) {
+      case 'auth/email-already-in-use':
+        return isRTL ? 'البريد الإلكتروني مسجل بالفعل. يرجى تسجيل الدخول.' : 'This email address is already in use. Please sign in.';
+      case 'auth/weak-password':
+        return isRTL ? 'كلمة المرور ضعيفة جداً (يجب ألا تقل عن 8 أحرف).' : 'Password is too weak. Please use at least 8 characters.';
+      case 'auth/invalid-email':
+        return isRTL ? 'صيغة البريد الإلكتروني غير صالحة.' : 'The email address is badly formatted.';
+      case 'auth/network-request-failed':
+        return isRTL ? 'فشل الاتصال بالإنترنت. يرجى التحقق من الشبكة.' : 'Network connection error. Please verify your connection.';
+      default:
+        return '';
+    }
+  };
+
   const handleRegister = async () => {
     if (!fullName.trim()) {
       setErrorMessage(isRTL ? 'يرجى إدخال الاسم الكامل' : 'Please enter your full name');
@@ -74,8 +89,10 @@ export default function RegisterScreen() {
       router.replace('/(tabs)');
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      const friendlyMsg = getFirebaseAuthErrorMessage(err?.code || '', isRTL);
       setErrorMessage(
-        err?.message ||
+        friendlyMsg ||
+          err?.message ||
           (isRTL
             ? 'فشل إنشاء الحساب. يرجى المحاولة مرة أخرى.'
             : 'Registration failed. Please check your details.')

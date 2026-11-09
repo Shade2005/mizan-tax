@@ -279,6 +279,7 @@ enum ExpenseStatus {
 
 model User {
   id              String       @id @default(uuid())
+  firebaseUid     String?      @unique
   email           String       @unique
   phone           String?      @unique
   passwordHash    String?

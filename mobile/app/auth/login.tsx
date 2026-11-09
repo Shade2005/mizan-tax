@@ -14,6 +14,7 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from '../../src/components/SafeAreaView';
@@ -34,6 +35,56 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const getFirebaseAuthErrorMessage = (code: string, isRTL: boolean): string => {
+    switch (code) {
+      case 'auth/invalid-credential':
+      case 'auth/wrong-password':
+      case 'auth/user-not-found':
+        return isRTL ? 'البريد الإلكتروني أو كلمة المرور غير صحيحة' : 'Incorrect email address or password.';
+      case 'auth/too-many-requests':
+        return isRTL
+          ? 'تم تعليق الحساب مؤقتاً لكثرة المحاولات الخاطئة. يرجى المحاولة لاحقاً أو إعادة تعيين كلمة المرور.'
+          : 'Access temporarily blocked due to multiple failed attempts. Please reset password or try again later.';
+      case 'auth/invalid-email':
+        return isRTL ? 'صيغة البريد الإلكتروني غير صحيحة' : 'The email address is not valid.';
+      case 'auth/network-request-failed':
+        return isRTL ? 'فشل الاتصال بالإنترنت. يرجى التحقق من الشبكة.' : 'Network connection error. Please verify your connection.';
+      default:
+        return '';
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email.trim() || !email.includes('@')) {
+      Alert.alert(
+        isRTL ? 'إعادة تعيين كلمة المرور' : 'Reset Password',
+        isRTL
+          ? 'يرجى كتابة بريدك الإلكتروني في الحقل أعلاه أولاً.'
+          : 'Please enter your email address in the field above first.'
+      );
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      await MizanApi.sendPasswordReset(email.trim());
+      Alert.alert(
+        isRTL ? 'تم الإرسال بنجاح' : 'Reset Link Sent',
+        isRTL
+          ? `تم إرسال رابط إعادة تعيين كلمة المرور إلى ${email.trim()}. تفقد بريدك الوارد.`
+          : `A password reset link has been sent to ${email.trim()}. Please check your inbox or spam folder.`
+      );
+    } catch (err: any) {
+      const friendlyMsg = getFirebaseAuthErrorMessage(err?.code || '', isRTL);
+      Alert.alert(
+        isRTL ? 'خطأ' : 'Error',
+        friendlyMsg || err?.message || (isRTL ? 'تعذر إرسال الرابط. تحقق من بريدك.' : 'Failed to send reset link.')
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleLogin = async () => {
     if (!email.trim() || !password) {
@@ -56,7 +107,10 @@ export default function LoginScreen() {
       router.replace('/(tabs)');
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      setErrorMessage(err?.message || (isRTL ? 'فشل تسجيل الدخول. يرجى التحقق من بياناتك.' : 'Login failed. Please check your credentials.'));
+      const friendlyMsg = getFirebaseAuthErrorMessage(err?.code || '', isRTL);
+      setErrorMessage(
+        friendlyMsg || err?.message || (isRTL ? 'فشل تسجيل الدخول. يرجى التحقق من بياناتك.' : 'Login failed. Please check your credentials.')
+      );
     } finally {
       setIsLoading(false);
     }
@@ -183,6 +237,15 @@ export default function LoginScreen() {
                   />
                 </TouchableOpacity>
               </View>
+            </View>
+
+            {/* Forgot Password Link */}
+            <View style={{ alignItems: isRTL ? 'flex-start' : 'flex-end', marginBottom: spacing.md }}>
+              <TouchableOpacity onPress={handleForgotPassword} activeOpacity={0.7}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: colors.brand.primary }}>
+                  {isRTL ? 'نسيت كلمة المرور؟' : 'Forgot password?'}
+                </Text>
+              </TouchableOpacity>
             </View>
 
             {/* Sign In Button */}

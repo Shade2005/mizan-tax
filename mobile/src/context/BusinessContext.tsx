@@ -12,6 +12,7 @@ import {
   STORAGE_KEY_USER_PROFILE,
 } from '../services/api';
 import { AppStorage } from '../utils/storage';
+import { auth, onAuthStateChanged } from '../services/firebase';
 
 export interface BusinessEntity {
   id: string;
@@ -181,13 +182,35 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [currentUserKey, loadUserProfile]);
 
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const idToken = await firebaseUser.getIdToken();
+          MizanApi.setAuthToken(idToken);
+          await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, idToken);
+          await loadUserProfile();
+          await fetchBusinesses();
+        } catch (e) {
+          console.warn('Firebase auth state listener error:', e);
+        }
+      } else {
+        const hasToken = await AppStorage.getItem(STORAGE_KEY_AUTH_TOKEN);
+        if (!hasToken) {
+          setIsAuthenticated(false);
+          setCurrentUser(null);
+        }
+      }
+    });
+
     (async () => {
       const savedUserKey = (await AppStorage.getItem(STORAGE_KEY_USER_KEY)) as any;
       const initialKey = savedUserKey === 'user-b' || savedUserKey === 'superadmin' ? savedUserKey : 'user-a';
       setCurrentUserKey(initialKey);
       await fetchBusinesses(initialKey);
     })();
-  }, []);
+
+    return () => unsubscribe();
+  }, [fetchBusinesses, loadUserProfile]);
 
   const setActiveBusinessId = useCallback((id: string) => {
     const exists = businesses.some((b) => b.id === id);

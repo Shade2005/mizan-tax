@@ -17,7 +17,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from '../../src/components/SafeAreaView';
 import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
@@ -44,8 +44,23 @@ interface InvoiceLineItem {
 
 export default function NewInvoiceScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ docType?: string; refInvoice?: string }>();
   const { isRTL } = useLocale();
   const { activeBusiness } = useBusiness();
+
+  const docType = params.docType || 'TAX_INVOICE';
+  const docTitle =
+    docType === 'CREDIT_NOTE'
+      ? 'New Tax Credit Note'
+      : docType === 'DEBIT_NOTE'
+      ? 'New Tax Debit Note'
+      : 'New Tax Invoice';
+  const defaultDraftPrefix =
+    docType === 'CREDIT_NOTE'
+      ? 'CN-DRAFT-001'
+      : docType === 'DEBIT_NOTE'
+      ? 'DN-DRAFT-001'
+      : 'DRAFT-001';
 
   const [step, setStep] = useState<InvoiceStep>('details');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -62,14 +77,22 @@ export default function NewInvoiceScreen() {
   const [customerTrn, setCustomerTrn] = useState('100567894300003');
   const [customerAddress, setCustomerAddress] = useState('Downtown Dubai, Boulevard Plaza');
   const [customerId, setCustomerId] = useState<string>('cust-default');
-  const [invoiceNo, setInvoiceNo] = useState('DRAFT-001');
+  const [invoiceNo, setInvoiceNo] = useState(defaultDraftPrefix);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState(
     new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]
   );
   const [currency, setCurrency] = useState('AED');
   const [paymentTerms, setPaymentTerms] = useState('Net 14 Days');
-  const [notes, setNotes] = useState('Payment is due within 14 days of issue date.');
+  const [notes, setNotes] = useState(
+    params.refInvoice
+      ? `${docTitle} issued under Article 60 referencing Invoice #${params.refInvoice}.`
+      : docType === 'CREDIT_NOTE'
+      ? 'Statutory Tax Credit Note issued in accordance with Article 60 of UAE VAT Executive Regulations.'
+      : docType === 'DEBIT_NOTE'
+      ? 'Tax Debit Note adjustment for supplementary supply value.'
+      : 'Payment is due within 14 days of issue date.'
+  );
 
   // Line Items
   const [items, setItems] = useState<InvoiceLineItem[]>([
@@ -300,11 +323,11 @@ export default function NewInvoiceScreen() {
           <View>
             <Text style={styles.headerTitle}>
               {step === 'details'
-                ? 'New Tax Invoice'
+                ? docTitle
                 : step === 'items'
                 ? 'Items & VAT Rates'
                 : step === 'preview'
-                ? 'Invoice Review'
+                ? `${docTitle} Review`
                 : `${invoiceNo}.pdf`}
             </Text>
             {activeBusiness && (

@@ -1,6 +1,6 @@
 // ============================================================================
 // Mizan (ميزان) - Books & Financial Ledger Screen
-// Real Multi-Tenant Financial Ledger: Persisted Invoices & Expenses
+// Real Multi-Tenant Financial Ledger: Persisted Invoices, Expenses, COA & Reports
 // Design Reference: screen-designs/4119.png
 // ============================================================================
 
@@ -14,10 +14,14 @@ import {
   TextInput,
   ActivityIndicator,
   RefreshControl,
+  Modal,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from '../../src/components/SafeAreaView';
 import { Ionicons } from '@expo/vector-icons';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import * as Haptics from 'expo-haptics';
 import { colors, radii, shadows, spacing } from '../../src/theme/tokens';
 import { useLocale } from '../../src/context/LocaleContext';
@@ -27,6 +31,11 @@ import { AnimatedPressable } from '../../src/animations';
 
 type BookTab = 'Overview' | 'Transactions' | 'Ledger' | 'Reports';
 type TxFilterType = 'ALL' | 'INCOME' | 'EXPENSE';
+type FiscalPeriodOption =
+  | 'FY 2026 (Jan 1 – Dec 31)'
+  | 'Q4 2026 (Oct 1 – Dec 31)'
+  | 'Q3 2026 (Jul 1 – Sep 30)'
+  | 'All Recorded Periods';
 
 interface UnifiedTransaction {
   id: string;
@@ -34,11 +43,19 @@ interface UnifiedTransaction {
   title: string;
   subtitle: string;
   amountAED: number;
+  vatAmountAED: number;
   date: string;
   status: string;
   icon: keyof typeof Ionicons.glyphMap;
   category?: string;
 }
+
+const FISCAL_PERIODS: FiscalPeriodOption[] = [
+  'FY 2026 (Jan 1 – Dec 31)',
+  'Q4 2026 (Oct 1 – Dec 31)',
+  'Q3 2026 (Jul 1 – Sep 30)',
+  'All Recorded Periods',
+];
 
 export default function BooksScreen() {
   const router = useRouter();
@@ -48,6 +65,11 @@ export default function BooksScreen() {
   const [activeTab, setActiveTab] = useState<BookTab>('Overview');
   const [searchTx, setSearchTx] = useState('');
   const [txTypeFilter, setTxTypeFilter] = useState<TxFilterType>('ALL');
+  const [selectedPeriod, setSelectedPeriod] = useState<FiscalPeriodOption>('FY 2026 (Jan 1 – Dec 31)');
+  const [periodModalOpen, setPeriodModalOpen] = useState(false);
+  const [selectedTx, setSelectedTx] = useState<UnifiedTransaction | null>(null);
+  const [exportingReport, setExportingReport] = useState<string | null>(null);
+
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -57,7 +79,11 @@ export default function BooksScreen() {
   const [expenseSummary, setExpenseSummary] = useState<any>(null);
 
   const fetchLedgerData = useCallback(async () => {
-    if (!activeBusiness?.id) return;
+    if (!activeBusiness?.id) {
+      setIsLoading(false);
+      setIsRefreshing(false);
+      return;
+    }
     try {
       const [invList, expList, expSum] = await Promise.all([
         MizanApi.getInvoices(activeBusiness.id),
@@ -86,24 +112,67 @@ export default function BooksScreen() {
     fetchLedgerData();
   };
 
-  // Compute Total Income from issued or paid invoices (or draft invoices recorded in books)
+  // Date filter helper for Fiscal Period
+  const matchesPeriod = useCallback(
+    (dateStr?: string) => {
+      if (!dateStr || selectedPeriod === 'All Recorded Periods') return true;
+      const d = dateStr.slice(0, 10);
+      if (selectedPeriod === 'FY 2026 (Jan 1 – Dec 31)') {
+        return d >= '2026-01-01' && d <= '2026-12-31';
+      }
+      if (selectedPeriod === 'Q4 2026 (Oct 1 – Dec 31)') {
+        return d >= '2026-10-01' && d <= '2026-12-31';
+      }
+      if (selectedPeriod === 'Q3 2026 (Jul 1 – Sep 30)') {
+        return d >= '2026-07-01' && d <= '2026-09-30';
+      }
+      return true;
+    },
+    [selectedPeriod]
+  );
+
+  const periodInvoices = useMemo(
+    () => invoices.filter((inv) => matchesPeriod(inv.issueDate)),
+    [invoices, matchesPeriod]
+  );
+
+  const periodExpenses = useMemo(
+    () =>
+      expenses.filter(
+        (exp) =>
+          exp.status !== 'ARCHIVED' &&
+          exp.status !== 'REJECTED' &&
+          matchesPeriod(exp.expenseDate)
+      ),
+    [expenses, matchesPeriod]
+  );
+
+  // Compute Total Income from period invoices
   const totalIncomeAED = useMemo(() => {
-    return invoices.reduce((acc, inv) => {
-      const val = Number(inv.totalAmountAED || inv.totalAmount) || 0;
+    return periodInvoices.reduce((acc, inv) => {
+      const val = Number(inv.totalAmountAED || inv.totalAmount || inv.calculation?.grandTotal) || 0;
       return acc + val;
     }, 0);
-  }, [invoices]);
+  }, [periodInvoices]);
 
-  // Compute Total Expenses from recorded expense bills
+  const totalOutputVatAED = useMemo(() => {
+    return periodInvoices.reduce((acc, inv) => {
+      return acc + (Number(inv.vatAmountAED || inv.vatAmount || inv.calculation?.totalVat) || 0);
+    }, 0);
+  }, [periodInvoices]);
+
+  // Compute Total Expenses from period expense bills
   const totalExpensesAED = useMemo(() => {
-    if (expenseSummary?.totalRecordedExpensesAED !== undefined && expenseSummary.totalRecordedExpensesAED > 0) {
-      return expenseSummary.totalRecordedExpensesAED;
-    }
-    return expenses.reduce((acc, exp) => {
-      if (exp.status === 'ARCHIVED' || exp.status === 'REJECTED') return acc;
+    return periodExpenses.reduce((acc, exp) => {
       return acc + (Number(exp.totalAmountAED || exp.totalAmount) || 0);
     }, 0);
-  }, [expenseSummary, expenses]);
+  }, [periodExpenses]);
+
+  const totalInputVatAED = useMemo(() => {
+    return periodExpenses.reduce((acc, exp) => {
+      return acc + (Number(exp.vatAmountAED || exp.vatAmount) || 0);
+    }, 0);
+  }, [periodExpenses]);
 
   const netProfitAED = totalIncomeAED - totalExpensesAED;
   const profitMarginPct =
@@ -114,29 +183,34 @@ export default function BooksScreen() {
     const list: UnifiedTransaction[] = [];
 
     // Map Invoices (Income)
-    invoices.forEach((inv) => {
+    periodInvoices.forEach((inv) => {
+      const grand = Number(inv.totalAmountAED || inv.totalAmount || inv.calculation?.grandTotal) || 0;
+      const vat = Number(inv.vatAmountAED || inv.vatAmount || inv.calculation?.totalVat) || 0;
       list.push({
         id: inv.id,
         type: 'INCOME',
         title: inv.customer?.name || inv.customerName || `Invoice ${inv.invoiceNumber}`,
-        subtitle: `Sales Invoice • ${inv.status}`,
-        amountAED: Number(inv.totalAmountAED || inv.totalAmount) || 0,
+        subtitle: `Sales Invoice #${inv.invoiceNumber} • ${inv.status}`,
+        amountAED: grand,
+        vatAmountAED: vat,
         date: inv.issueDate ? inv.issueDate.split('T')[0] : '2026-10-15',
         status: inv.status,
         icon: 'cash-outline',
-        category: 'Operating Revenue',
+        category: 'Operating Revenue (4000)',
       });
     });
 
     // Map Expenses
-    expenses.forEach((exp) => {
-      if (exp.status === 'ARCHIVED') return;
+    periodExpenses.forEach((exp) => {
+      const grand = Number(exp.totalAmountAED || exp.totalAmount) || 0;
+      const vat = Number(exp.vatAmountAED || exp.vatAmount) || 0;
       list.push({
         id: exp.id,
         type: 'EXPENSE',
         title: exp.supplierName,
         subtitle: `${exp.categoryNameEn || exp.category} • ${exp.status}`,
-        amountAED: Number(exp.totalAmountAED || exp.totalAmount) || 0,
+        amountAED: grand,
+        vatAmountAED: vat,
         date: exp.expenseDate,
         status: exp.status,
         icon: 'receipt-outline',
@@ -146,7 +220,7 @@ export default function BooksScreen() {
 
     // Sort descending by date
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [invoices, expenses]);
+  }, [periodInvoices, periodExpenses]);
 
   // Filtered transactions
   const filteredTransactions = useMemo(() => {
@@ -165,6 +239,115 @@ export default function BooksScreen() {
     });
   }, [transactions, txTypeFilter, searchTx]);
 
+  // Chart of Accounts / Trial Balance computation for Ledger tab
+  const chartOfAccounts = useMemo(() => {
+    const netSales = Math.max(0, totalIncomeAED - totalOutputVatAED);
+    const netExpenses = Math.max(0, totalExpensesAED - totalInputVatAED);
+    return [
+      {
+        code: '1100',
+        name: 'Cash & Accounts Receivable',
+        type: 'Asset',
+        debit: totalIncomeAED,
+        credit: totalExpensesAED,
+        balance: totalIncomeAED - totalExpensesAED,
+      },
+      {
+        code: '1200',
+        name: 'Input VAT Recoverable (FTA Box 9)',
+        type: 'Asset',
+        debit: totalInputVatAED,
+        credit: 0,
+        balance: totalInputVatAED,
+      },
+      {
+        code: '2100',
+        name: 'Output VAT Payable (FTA Box 1)',
+        type: 'Liability',
+        debit: 0,
+        credit: totalOutputVatAED,
+        balance: totalOutputVatAED,
+      },
+      {
+        code: '4000',
+        name: 'Operating Sales Revenue',
+        type: 'Revenue',
+        debit: 0,
+        credit: netSales,
+        balance: netSales,
+      },
+      {
+        code: '5000',
+        name: 'Operating & General Expenses',
+        type: 'Expense',
+        debit: netExpenses,
+        credit: 0,
+        balance: netExpenses,
+      },
+    ];
+  }, [totalIncomeAED, totalExpensesAED, totalOutputVatAED, totalInputVatAED]);
+
+  const handleExportBookReport = async (reportCode: string, reportTitle: string) => {
+    setExportingReport(reportCode);
+    try {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      let html = '';
+      if (activeBusiness?.id) {
+        try {
+          const res = await MizanApi.generateReport({
+            businessId: activeBusiness.id,
+            reportType: reportCode,
+            format: 'PDF',
+          });
+          html = res.content;
+        } catch {
+          // Use clean client financial schedule template
+        }
+      }
+
+      if (!html) {
+        html = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8" />
+            <title>${reportTitle}</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 36px; color: #141416; }
+              .header { border-bottom: 2px solid #F95700; padding-bottom: 16px; margin-bottom: 24px; }
+              .brand { font-size: 24px; font-weight: 800; color: #F95700; }
+              table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+              th, td { padding: 10px; border: 1px solid #EAE6E1; text-align: left; }
+              th { background: #F7F6F4; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <div class="brand">Mizan ميزان — ${reportTitle}</div>
+              <p><strong>Entity:</strong> ${activeBusiness?.legalName || 'UAE Enterprise'} | <strong>Period:</strong> ${selectedPeriod}</p>
+            </div>
+            <table>
+              <tr><th>Metric / Account</th><th>Amount (AED)</th></tr>
+              <tr><td>Gross Revenue (Income)</td><td>AED ${totalIncomeAED.toFixed(2)}</td></tr>
+              <tr><td>Output VAT Collected (5%)</td><td>AED ${totalOutputVatAED.toFixed(2)}</td></tr>
+              <tr><td>Operating Expenses</td><td>AED ${totalExpensesAED.toFixed(2)}</td></tr>
+              <tr><td>Recoverable Input VAT (5%)</td><td>AED ${totalInputVatAED.toFixed(2)}</td></tr>
+              <tr><td><strong>Net Profit Before Tax</strong></td><td><strong>AED ${netProfitAED.toFixed(2)}</strong></td></tr>
+            </table>
+          </body>
+          </html>
+        `;
+      }
+
+      const { uri } = await Print.printToFileAsync({ html });
+      await Sharing.shareAsync(uri);
+    } catch (err: any) {
+      Alert.alert('Export Error', err?.message || 'Could not generate PDF report.');
+    } finally {
+      setExportingReport(null);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       {/* Top Header */}
@@ -181,7 +364,13 @@ export default function BooksScreen() {
           )}
           <View>
             <Text style={styles.headerTitle}>
-              {activeTab === 'Transactions' ? 'Financial Ledger' : 'Books & Financial Ledger'}
+              {activeTab === 'Transactions'
+                ? 'Financial Ledger'
+                : activeTab === 'Ledger'
+                ? 'Chart of Accounts'
+                : activeTab === 'Reports'
+                ? 'Financial Reports'
+                : 'Books & Financial Ledger'}
             </Text>
             {activeBusiness && (
               <Text style={styles.headerSubtitle}>
@@ -257,6 +446,22 @@ export default function BooksScreen() {
           })}
         </ScrollView>
 
+        {/* Interactive Fiscal Period Selector (Shared across tabs) */}
+        <TouchableOpacity
+          style={styles.fyDropdown}
+          activeOpacity={0.75}
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            setPeriodModalOpen(true);
+          }}
+        >
+          <View style={styles.fyRow}>
+            <Ionicons name="calendar-outline" size={18} color={colors.brand.primary} />
+            <Text style={styles.fyDropdownText}>{selectedPeriod}</Text>
+          </View>
+          <Ionicons name="chevron-down" size={18} color={colors.neutral.textPrimary} />
+        </TouchableOpacity>
+
         {isLoading ? (
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color={colors.brand.primary} />
@@ -269,15 +474,6 @@ export default function BooksScreen() {
             {/* ==================================================================== */}
             {activeTab === 'Overview' && (
               <View style={styles.tabBody}>
-                {/* Fiscal Period Selector */}
-                <View style={styles.fyDropdown}>
-                  <View style={styles.fyRow}>
-                    <Ionicons name="calendar-outline" size={18} color={colors.neutral.textSecondary} />
-                    <Text style={styles.fyDropdownText}>FY 2026 (Jan 1 – Dec 31)</Text>
-                  </View>
-                  <Ionicons name="chevron-down" size={18} color={colors.neutral.textPrimary} />
-                </View>
-
                 {/* Business Performance Dark Hero Card */}
                 <View style={styles.perfDarkCard}>
                   <View style={styles.perfTopRow}>
@@ -462,7 +658,7 @@ export default function BooksScreen() {
                 <View style={styles.txHeaderBlock}>
                   <Text style={styles.txMainHeading}>Transactions Ledger</Text>
                   <Text style={styles.txSubHeading}>
-                    Chronological financial feed for {activeBusiness?.legalName}.
+                    Tap any entry to inspect its double-entry journal voucher.
                   </Text>
                 </View>
 
@@ -499,7 +695,7 @@ export default function BooksScreen() {
                     onPress={() => setTxTypeFilter('INCOME')}
                   >
                     <Text style={[styles.miniFilterText, txTypeFilter === 'INCOME' && styles.miniFilterTextActive]}>
-                      Income ({invoices.length})
+                      Income ({periodInvoices.length})
                     </Text>
                   </TouchableOpacity>
 
@@ -508,7 +704,7 @@ export default function BooksScreen() {
                     onPress={() => setTxTypeFilter('EXPENSE')}
                   >
                     <Text style={[styles.miniFilterText, txTypeFilter === 'EXPENSE' && styles.miniFilterTextActive]}>
-                      Expenses ({expenses.length})
+                      Expenses ({periodExpenses.length})
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -538,13 +734,21 @@ export default function BooksScreen() {
                     <Text style={styles.emptySub}>
                       {searchTx
                         ? 'No records match your search criteria.'
-                        : 'No financial records have been recorded for this entity yet.'}
+                        : 'No financial records have been recorded for this period yet.'}
                     </Text>
                   </View>
                 ) : (
                   <View style={styles.txListContainer}>
                     {filteredTransactions.map((tx) => (
-                      <View key={tx.id} style={styles.txCard}>
+                      <TouchableOpacity
+                        key={`${tx.type}-${tx.id}`}
+                        style={styles.txCard}
+                        activeOpacity={0.75}
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          setSelectedTx(tx);
+                        }}
+                      >
                         <View
                           style={[
                             styles.txIconSquare,
@@ -577,9 +781,9 @@ export default function BooksScreen() {
                           >
                             {tx.type === 'INCOME' ? '+' : '-'}AED {tx.amountAED.toLocaleString()}
                           </Text>
-                          <Text style={styles.txTime}>{tx.date}</Text>
+                          <Text style={styles.txTime}>Tap for Voucher →</Text>
                         </View>
-                      </View>
+                      </TouchableOpacity>
                     ))}
                   </View>
                 )}
@@ -587,23 +791,107 @@ export default function BooksScreen() {
             )}
 
             {/* ==================================================================== */}
-            {/* VIEW 3 & 4: LEDGER & REPORTS PLACEHOLDERS                             */}
+            {/* VIEW 3: GENERAL LEDGER & CHART OF ACCOUNTS                            */}
             {/* ==================================================================== */}
-            {(activeTab === 'Ledger' || activeTab === 'Reports') && (
+            {activeTab === 'Ledger' && (
               <View style={styles.tabBody}>
                 <View style={styles.summaryCard}>
                   <View style={styles.summaryTitleRow}>
-                    <Ionicons name="document-text" size={20} color={colors.brand.primary} />
-                    <Text style={styles.summaryCardTitle}>
-                      {activeTab === 'Ledger' ? 'General Ledger & Chart of Accounts' : 'Financial & Tax Reports'}
-                    </Text>
+                    <Ionicons name="book-outline" size={18} color={colors.brand.primary} />
+                    <Text style={styles.summaryCardTitle}>UAE Standard Chart of Accounts</Text>
                   </View>
-                  <Text style={styles.bannerSubtitle}>
-                    {activeTab === 'Ledger'
-                      ? 'Double-entry journal vouchers, trial balance, and debit/credit postings compliant with UAE standards.'
-                      : 'Audit-ready profit & loss and balance sheet reports for Federal Tax Authority compliance.'}
+                  <Text style={[styles.bannerSubtitle, { marginBottom: 12 }]}>
+                    Live double-entry ledger balances derived from your approved invoices and expenses.
                   </Text>
+
+                  {chartOfAccounts.map((acc, idx) => (
+                    <React.Fragment key={acc.code}>
+                      {idx > 0 && <View style={styles.itemDivider} />}
+                      <View style={styles.coaRow}>
+                        <View style={styles.coaCodeBadge}>
+                          <Text style={styles.coaCodeText}>{acc.code}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.coaNameText}>{acc.name}</Text>
+                          <Text style={styles.coaTypeText}>
+                            {acc.type} • DR: AED {acc.debit.toLocaleString()} | CR: AED {acc.credit.toLocaleString()}
+                          </Text>
+                        </View>
+                        <Text style={styles.coaBalanceText}>
+                          AED {Math.abs(acc.balance).toLocaleString()}
+                        </Text>
+                      </View>
+                    </React.Fragment>
+                  ))}
                 </View>
+
+                <TouchableOpacity
+                  style={styles.exportActionBtn}
+                  onPress={() => handleExportBookReport('TRIAL_BALANCE', 'Trial Balance & General Ledger')}
+                >
+                  <Ionicons name="download-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.exportActionBtnText}>Download Trial Balance PDF</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* ==================================================================== */}
+            {/* VIEW 4: FINANCIAL & TAX REPORTS                                       */}
+            {/* ==================================================================== */}
+            {activeTab === 'Reports' && (
+              <View style={styles.tabBody}>
+                {[
+                  {
+                    code: 'PROFIT_AND_LOSS',
+                    title: 'Profit & Loss Statement (P&L)',
+                    desc: 'Operating revenue, cost of sales, and net accounting profit schedule.',
+                    icon: 'trending-up-outline' as const,
+                  },
+                  {
+                    code: 'VAT_201_SUMMARY',
+                    title: 'FTA VAT Form 201 Audit Working Paper',
+                    desc: 'Output VAT (Box 1) vs Recoverable Input VAT (Box 9) transaction breakdown.',
+                    icon: 'receipt-outline' as const,
+                  },
+                  {
+                    code: 'CORPORATE_TAX_PACK',
+                    title: 'Corporate Tax Profit Reconciliation',
+                    desc: 'Accounting net profit adjustments under Articles 21, 32, and 33.',
+                    icon: 'business-outline' as const,
+                  },
+                  {
+                    code: 'TRIAL_BALANCE',
+                    title: 'General Ledger & Trial Balance',
+                    desc: 'Complete chart of accounts debit/credit balances for external audit.',
+                    icon: 'library-outline' as const,
+                  },
+                ].map((rep) => (
+                  <View key={rep.code} style={styles.summaryCard}>
+                    <View style={styles.reportCardTop}>
+                      <View style={styles.quickIconBox}>
+                        <Ionicons name={rep.icon} size={20} color={colors.brand.primary} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.summaryCardTitle}>{rep.title}</Text>
+                        <Text style={styles.txSubtitle}>{rep.desc}</Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.exportActionBtn, { marginTop: 12 }]}
+                      onPress={() => handleExportBookReport(rep.code, rep.title)}
+                      disabled={exportingReport === rep.code}
+                    >
+                      {exportingReport === rep.code ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Ionicons name="share-outline" size={16} color="#FFFFFF" />
+                          <Text style={styles.exportActionBtnText}>Generate & Share PDF</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ))}
               </View>
             )}
           </>
@@ -611,6 +899,98 @@ export default function BooksScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* ==================================================================== */}
+      {/* MODAL 1: FISCAL PERIOD PICKER                                         */}
+      {/* ==================================================================== */}
+      <Modal visible={periodModalOpen} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Select Fiscal Period</Text>
+              <TouchableOpacity onPress={() => setPeriodModalOpen(false)}>
+                <Ionicons name="close" size={22} color={colors.neutral.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            {FISCAL_PERIODS.map((p) => {
+              const active = selectedPeriod === p;
+              return (
+                <TouchableOpacity
+                  key={p}
+                  style={[styles.periodOptionRow, active && styles.periodOptionActive]}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {});
+                    setSelectedPeriod(p);
+                    setPeriodModalOpen(false);
+                  }}
+                >
+                  <Text style={[styles.periodOptionText, active && { color: colors.brand.primary, fontWeight: '800' }]}>
+                    {p}
+                  </Text>
+                  {active && <Ionicons name="checkmark-circle" size={20} color={colors.brand.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==================================================================== */}
+      {/* MODAL 2: JOURNAL VOUCHER DRILL-DOWN                                   */}
+      {/* ==================================================================== */}
+      <Modal visible={!!selectedTx} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalTitle}>Journal Voucher Entry</Text>
+                <Text style={styles.txSubtitle}>{selectedTx?.date} • {selectedTx?.status}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setSelectedTx(null)}>
+                <Ionicons name="close" size={22} color={colors.neutral.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedTx && (
+              <View style={{ gap: 10 }}>
+                <View style={styles.voucherBox}>
+                  <Text style={styles.coaNameText}>{selectedTx.title}</Text>
+                  <Text style={styles.txSubtitle}>{selectedTx.subtitle}</Text>
+                  <View style={[styles.itemDivider, { marginVertical: 8 }]} />
+
+                  <View style={styles.tableRow}>
+                    <Text style={styles.tableLabel}>Gross Amount</Text>
+                    <Text style={styles.tableValue}>AED {selectedTx.amountAED.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.tableRow}>
+                    <Text style={styles.tableLabel}>VAT Component (5%)</Text>
+                    <Text style={styles.tableValue}>AED {selectedTx.vatAmountAED.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.tableRow}>
+                    <Text style={styles.tableLabel}>Ledger Account</Text>
+                    <Text style={styles.tableValue}>{selectedTx.category}</Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.exportActionBtn}
+                  onPress={() => {
+                    const isInc = selectedTx.type === 'INCOME';
+                    setSelectedTx(null);
+                    router.push(isInc ? '/(tabs)/invoices' : '/expenses/review');
+                  }}
+                >
+                  <Ionicons name="open-outline" size={16} color="#FFFFFF" />
+                  <Text style={styles.exportActionBtnText}>
+                    {selectedTx.type === 'INCOME' ? 'Open in Invoices Hub' : 'Open in Expense Review'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -686,7 +1066,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   segmentScroll: {
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
   segmentContent: {
     flexDirection: 'row',
@@ -732,10 +1112,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: colors.neutral.surface,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: 10,
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.neutral.border,
+    marginBottom: 14,
   },
   fyRow: {
     flexDirection: 'row',
@@ -744,7 +1125,7 @@ const styles = StyleSheet.create({
   },
   fyDropdownText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
     color: colors.neutral.textPrimary,
   },
   perfDarkCard: {
@@ -846,7 +1227,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   summaryCardTitle: {
     fontSize: 15,
@@ -857,7 +1238,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   rowLabelGroup: {
     flexDirection: 'row',
@@ -1087,7 +1468,8 @@ const styles = StyleSheet.create({
   },
   txTime: {
     fontSize: 10,
-    color: colors.neutral.textTertiary,
+    color: colors.brand.primary,
+    fontWeight: '600',
     marginTop: 2,
   },
   emptyCard: {
@@ -1110,5 +1492,106 @@ const styles = StyleSheet.create({
     color: colors.neutral.textSecondary,
     textAlign: 'center',
     marginTop: 4,
+  },
+  coaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    gap: 10,
+  },
+  coaCodeBadge: {
+    backgroundColor: colors.brand.primaryMuted,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  coaCodeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.brand.primary,
+  },
+  coaNameText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.neutral.textPrimary,
+  },
+  coaTypeText: {
+    fontSize: 11,
+    color: colors.neutral.textSecondary,
+    marginTop: 2,
+  },
+  coaBalanceText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.neutral.textPrimary,
+  },
+  reportCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  exportActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: colors.brand.primary,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+  },
+  exportActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  modalCard: {
+    backgroundColor: colors.neutral.surface,
+    borderRadius: radii.xl,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.neutral.border,
+    ...shadows.cardHover,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: colors.neutral.textPrimary,
+  },
+  periodOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: radii.md,
+    marginBottom: 6,
+    backgroundColor: colors.neutral.canvas,
+  },
+  periodOptionActive: {
+    borderWidth: 1,
+    borderColor: colors.brand.primary,
+    backgroundColor: '#FFF8F4',
+  },
+  periodOptionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.neutral.textPrimary,
+  },
+  voucherBox: {
+    backgroundColor: colors.neutral.canvas,
+    padding: 14,
+    borderRadius: radii.md,
   },
 });

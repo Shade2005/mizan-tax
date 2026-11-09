@@ -1,6 +1,7 @@
 // ============================================================================
-// Mizan (ميزان) - Global JWT Authentication Guard
-// Enforces mandatory Bearer token validation across all sensitive endpoints
+// Mizan (ميزان) - Global Authentication Guard
+// Validates Firebase ID Tokens (with automatic User/Org synchronization in PostgreSQL)
+// with backward-compatible fallback to local JWTs for test suites.
 // ============================================================================
 
 import {
@@ -12,16 +13,18 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthService } from './auth.service';
+import { FirebaseService } from './firebase.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
     @Inject(Reflector) private readonly reflector: Reflector,
-    @Inject(AuthService) private readonly authService: AuthService
+    @Inject(AuthService) private readonly authService: AuthService,
+    @Inject(FirebaseService) private readonly firebaseService: FirebaseService
   ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -49,11 +52,23 @@ export class AuthGuard implements CanActivate {
     }
 
     const token = parts[1];
-    const user = this.authService.validateToken(token);
 
-    // Attach validated identity & organisation boundary to request context
-    request.user = user;
-
-    return true;
+    // 1. Try Firebase ID Token verification & database synchronization
+    try {
+      const user = await this.firebaseService.validateAndSyncUser(token);
+      request.user = user;
+      return true;
+    } catch (fbErr: any) {
+      // 2. Fallback to local JWT (allows existing integration & test suites to pass)
+      try {
+        const user = this.authService.validateToken(token);
+        request.user = user;
+        return true;
+      } catch {
+        throw new UnauthorizedException(
+          fbErr?.message || 'Invalid or expired authentication token.'
+        );
+      }
+    }
   }
 }

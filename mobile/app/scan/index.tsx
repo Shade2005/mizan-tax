@@ -40,7 +40,10 @@ export default function ScanTradeLicenseScreen() {
   const [torchOn, setTorchOn] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<'0.5' | '1x' | '2'>('1x');
   const [isMultiPage, setIsMultiPage] = useState(false);
+  const [capturedPages, setCapturedPages] = useState<{ base64: string; mime: string }[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  const cameraZoomValue = zoomLevel === '0.5' ? 0 : zoomLevel === '1x' ? 0.12 : 0.35;
 
   // Holds extracted data or error from async OCR
   const ocrResultRef = useRef<{ data?: ExtractedTradeLicense; error?: string } | null>(null);
@@ -102,6 +105,22 @@ export default function ScanTradeLicenseScreen() {
     }
   };
 
+  const handleImageAcquired = async (base64Data: string, mimeType: string = 'image/jpeg') => {
+    if (isMultiPage) {
+      const nextPages = [...capturedPages, { base64: base64Data, mime: mimeType }];
+      setCapturedPages(nextPages);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      return;
+    }
+    await processImageBase64(base64Data, mimeType);
+  };
+
+  const handleProcessQueuedPages = async () => {
+    if (capturedPages.length === 0) return;
+    const primary = capturedPages[0];
+    await processImageBase64(primary.base64, primary.mime);
+  };
+
   const handleCapture = async () => {
     if (Platform.OS !== 'web') {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -114,7 +133,7 @@ export default function ScanTradeLicenseScreen() {
           base64: true,
         });
         if (photo?.base64) {
-          await processImageBase64(photo.base64, 'image/jpeg');
+          await handleImageAcquired(photo.base64, 'image/jpeg');
           return;
         }
       } catch (err) {
@@ -137,7 +156,7 @@ export default function ScanTradeLicenseScreen() {
       if (!result.canceled && result.assets?.[0]?.base64) {
         const asset = result.assets[0];
         const mime = asset.mimeType || 'image/jpeg';
-        await processImageBase64(asset.base64!, mime);
+        await handleImageAcquired(asset.base64!, mime);
       }
     } catch (err: any) {
       console.warn('Gallery picker error:', err?.message || err);
@@ -205,6 +224,7 @@ export default function ScanTradeLicenseScreen() {
             ref={cameraRef}
             style={styles.camera}
             enableTorch={torchOn}
+            zoom={cameraZoomValue}
           >
             {/* Dark Surrounding Masks */}
             <View style={styles.maskDark} />
@@ -253,7 +273,10 @@ export default function ScanTradeLicenseScreen() {
             <TouchableOpacity
               key={lvl}
               style={[styles.zoomPill, zoomLevel === lvl && styles.zoomPillActive]}
-              onPress={() => setZoomLevel(lvl)}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                setZoomLevel(lvl);
+              }}
             >
               <Text style={[styles.zoomText, zoomLevel === lvl && styles.zoomTextActive]}>
                 {lvl}
@@ -262,6 +285,41 @@ export default function ScanTradeLicenseScreen() {
           ))}
         </View>
       </View>
+
+      {isMultiPage && capturedPages.length > 0 && (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            backgroundColor: '#1E293B',
+            marginHorizontal: spacing.lg,
+            marginBottom: 8,
+            paddingHorizontal: 14,
+            paddingVertical: 10,
+            borderRadius: radii.md,
+            borderWidth: 1,
+            borderColor: colors.brand.primary,
+          }}
+        >
+          <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>
+            {capturedPages.length} License Page(s) Queued
+          </Text>
+          <TouchableOpacity
+            style={{
+              backgroundColor: colors.brand.primary,
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: radii.pill,
+            }}
+            onPress={handleProcessQueuedPages}
+          >
+            <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '800' }}>
+              Process All →
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Bottom Shutter & Controls Bar */}
       <View style={styles.bottomControlsBar}>

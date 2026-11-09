@@ -145,4 +145,12 @@ export class AuthController {
   async getProfile(@CurrentUser() user: AuthenticatedUser) {
     return this.authService.getUserProfile(user);
   }
+
+  @Post('sync')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Sync Firebase authenticated user with PostgreSQL and return profile' })
+  @ApiResponse({ status: 200, description: 'User synced successfully.' })
+  async syncFirebaseUser(@CurrentUser() user: AuthenticatedUser) {
+    return this.authService.getUserProfile(user);
+  }
 }

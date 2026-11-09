@@ -1,7 +1,7 @@
 // ============================================================================
 // Mizan (ميزان) - Invoices Hub Tab
 // Design Ref: screen-designs/4130.png (Screen 1) & screen-designs/4126.png (Screen 1)
-// Clean card filters, invoice listing, status chips & action buttons
+// Clean card filters, invoice listing, status chips, detail modal & actions
 // Connected to Active Business Entity & Real Persisted Backend Records
 // ============================================================================
 
@@ -15,12 +15,16 @@ import {
   TextInput,
   ActivityIndicator,
   RefreshControl,
+  Modal,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from '../../src/components/SafeAreaView';
 import { Ionicons } from '@expo/vector-icons';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import * as Haptics from 'expo-haptics';
-import { colors, radii, spacing, typography, shadows } from '../../src/theme/tokens';
+import { colors, radii, spacing, shadows } from '../../src/theme/tokens';
 import { useLocale } from '../../src/context/LocaleContext';
 import { useBusiness } from '../../src/context/BusinessContext';
 import { MizanApi } from '../../src/services/api';
@@ -32,13 +36,17 @@ interface InvoiceListItem {
   id: string;
   invoiceNumber: string;
   customerName: string;
+  customerTrn?: string;
   issueDate: string;
   dueDate: string;
   currency: string;
+  subtotalNet: number;
+  vatTotal: number;
   grandTotal: number;
   amountPaid: number;
   outstandingBalance: number;
   status: 'DRAFT' | 'ISSUED' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE' | 'VOID';
+  lines?: any[];
 }
 
 export default function InvoicesTab() {
@@ -51,6 +59,10 @@ export default function InvoicesTab() {
   const [invoices, setInvoices] = useState<InvoiceListItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Selected Invoice Detail Modal State
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceListItem | null>(null);
+  const [isActionBusy, setIsActionBusy] = useState(false);
 
   const fetchInvoices = useCallback(async () => {
     if (!activeBusiness?.id) return;
@@ -70,13 +82,18 @@ export default function InvoicesTab() {
         id: inv.id,
         invoiceNumber: inv.invoiceNumber,
         customerName: inv.customer?.name || inv.customer?.companyName || 'Valued Customer',
+        customerTrn: inv.customer?.trn || '',
         issueDate: inv.issueDate,
         dueDate: inv.dueDate,
         currency: inv.currency || 'AED',
-        grandTotal: inv.calculation?.grandTotal || 0,
+        subtotalNet: inv.calculation?.subtotalAfterDiscount ?? inv.subtotalAmount ?? 0,
+        vatTotal: inv.calculation?.totalVat ?? inv.vatAmount ?? 0,
+        grandTotal: inv.calculation?.grandTotal ?? inv.totalAmount ?? 0,
         amountPaid: inv.amountPaid || 0,
-        outstandingBalance: inv.outstandingBalance || 0,
+        outstandingBalance:
+          inv.outstandingBalance ?? (inv.calculation?.grandTotal ?? inv.totalAmount ?? 0) - (inv.amountPaid || 0),
         status: inv.status,
+        lines: inv.lines || [],
       }));
       setInvoices(mapped);
     } catch (err) {
@@ -94,6 +111,117 @@ export default function InvoicesTab() {
   const onRefresh = () => {
     setRefreshing(true);
     fetchInvoices();
+  };
+
+  const handleOpenInvoice = (inv: InvoiceListItem) => {
+    Haptics.selectionAsync().catch(() => {});
+    setSelectedInvoice(inv);
+  };
+
+  const handleIssueDraftInvoice = async () => {
+    if (!selectedInvoice) return;
+    setIsActionBusy(true);
+    try {
+      const issued = await MizanApi.issueInvoice(selectedInvoice.id);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      Alert.alert(
+        'Invoice Issued',
+        `Invoice ${issued.invoiceNumber || selectedInvoice.invoiceNumber} has been officially issued under Article 59.`
+      );
+      setSelectedInvoice(null);
+      await fetchInvoices();
+    } catch (err: any) {
+      Alert.alert('Issuance Failed', err?.message || 'Could not issue draft invoice.');
+    } finally {
+      setIsActionBusy(false);
+    }
+  };
+
+  const handleMarkInvoicePaid = async () => {
+    if (!selectedInvoice) return;
+    setIsActionBusy(true);
+    try {
+      const payAmount =
+        selectedInvoice.outstandingBalance > 0
+          ? selectedInvoice.outstandingBalance
+          : selectedInvoice.grandTotal;
+      await MizanApi.recordInvoicePayment(selectedInvoice.id, payAmount);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      Alert.alert(
+        'Payment Recorded',
+        `${selectedInvoice.currency} ${payAmount.toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+        })} recorded against ${selectedInvoice.invoiceNumber}.`
+      );
+      setSelectedInvoice(null);
+      await fetchInvoices();
+    } catch (err: any) {
+      Alert.alert('Payment Error', err?.message || 'Could not record invoice payment.');
+    } finally {
+      setIsActionBusy(false);
+    }
+  };
+
+  const handleShareInvoicePdf = async () => {
+    if (!selectedInvoice) return;
+    setIsActionBusy(true);
+    try {
+      let html = '';
+      try {
+        const res = await MizanApi.getInvoicePdfHtml(selectedInvoice.id);
+        html = res.html;
+      } catch {
+        // Fallback statutory Article 59 template
+        html = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8" />
+            <title>Tax Invoice ${selectedInvoice.invoiceNumber}</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 36px; color: #141416; }
+              .header { display: flex; justify-content: space-between; border-bottom: 2px solid #F95700; padding-bottom: 18px; margin-bottom: 24px; }
+              .brand { font-size: 24px; font-weight: 800; color: #F95700; }
+              .box { background: #F7F6F4; padding: 14px; border-radius: 8px; margin-bottom: 20px; }
+              table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+              th, td { padding: 10px; border-bottom: 1px solid #EAE6E1; text-align: left; }
+              th { background: #F7F6F4; font-size: 12px; }
+              .totals { margin-top: 24px; text-align: right; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <div>
+                <div class="brand">${activeBusiness?.legalName || 'Mizan Business'}</div>
+                <p>TRN: ${activeBusiness?.vatTrn || 'N/A'} | License: ${activeBusiness?.tradeLicenseNumber || 'N/A'}</p>
+              </div>
+              <div style="text-align: right;">
+                <h2>TAX INVOICE</h2>
+                <p><strong>#${selectedInvoice.invoiceNumber}</strong></p>
+                <p>Date: ${selectedInvoice.issueDate}</p>
+              </div>
+            </div>
+            <div class="box">
+              <strong>Bill To:</strong> ${selectedInvoice.customerName}<br/>
+              ${selectedInvoice.customerTrn ? `Customer TRN: ${selectedInvoice.customerTrn}` : ''}
+            </div>
+            <div class="totals">
+              <p>Net Amount: ${selectedInvoice.currency} ${selectedInvoice.subtotalNet.toFixed(2)}</p>
+              <p>VAT (5%): ${selectedInvoice.currency} ${selectedInvoice.vatTotal.toFixed(2)}</p>
+              <h3>Grand Total: ${selectedInvoice.currency} ${selectedInvoice.grandTotal.toFixed(2)}</h3>
+              <p>Status: <strong>${selectedInvoice.status}</strong></p>
+            </div>
+          </body>
+          </html>
+        `;
+      }
+      const { uri } = await Print.printToFileAsync({ html });
+      await Sharing.shareAsync(uri);
+    } catch (err: any) {
+      Alert.alert('PDF Export Error', err?.message || 'Unable to generate PDF invoice.');
+    } finally {
+      setIsActionBusy(false);
+    }
   };
 
   const filteredInvoices = invoices.filter((inv) => {
@@ -171,7 +299,9 @@ export default function InvoicesTab() {
         <AnimatedPressable
           style={styles.createButton}
           activeScale={0.97}
-          onPress={() => router.push('/invoices/new')}
+          onPress={() =>
+            router.push({ pathname: '/invoices/new', params: { docType: 'TAX_INVOICE' } })
+          }
         >
           <Ionicons name="add" size={22} color="#FFFFFF" style={{ marginRight: 6 }} />
           <Text style={styles.createButtonText}>
@@ -183,7 +313,9 @@ export default function InvoicesTab() {
         <View style={styles.actionGrid}>
           <AnimatedPressable
             style={styles.actionCard}
-            onPress={() => router.push('/invoices/new')}
+            onPress={() =>
+              router.push({ pathname: '/invoices/new', params: { docType: 'TAX_INVOICE' } })
+            }
             activeScale={0.97}
           >
             <View style={[styles.actionIconBox, { backgroundColor: '#FFF3ED' }]}>
@@ -196,7 +328,9 @@ export default function InvoicesTab() {
 
           <AnimatedPressable
             style={styles.actionCard}
-            onPress={() => router.push('/invoices/new')}
+            onPress={() =>
+              router.push({ pathname: '/invoices/new', params: { docType: 'CREDIT_NOTE' } })
+            }
             activeScale={0.97}
           >
             <View style={[styles.actionIconBox, { backgroundColor: '#F0F9FF' }]}>
@@ -209,7 +343,9 @@ export default function InvoicesTab() {
 
           <AnimatedPressable
             style={styles.actionCard}
-            onPress={() => router.push('/invoices/new')}
+            onPress={() =>
+              router.push({ pathname: '/invoices/new', params: { docType: 'DEBIT_NOTE' } })
+            }
             activeScale={0.97}
           >
             <View style={[styles.actionIconBox, { backgroundColor: '#FDF2F8' }]}>
@@ -271,6 +407,11 @@ export default function InvoicesTab() {
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Ionicons name="close-circle" size={18} color={colors.neutral.textTertiary} />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Loading Indicator */}
@@ -305,7 +446,9 @@ export default function InvoicesTab() {
             {activeBusiness && (
               <TouchableOpacity
                 style={styles.emptyCtaBtn}
-                onPress={() => router.push('/invoices/new')}
+                onPress={() =>
+                  router.push({ pathname: '/invoices/new', params: { docType: 'TAX_INVOICE' } })
+                }
                 activeOpacity={0.8}
               >
                 <Ionicons name="add" size={16} color="#FFFFFF" />
@@ -330,7 +473,7 @@ export default function InvoicesTab() {
                 key={inv.id}
                 style={styles.invoiceRowCard}
                 activeOpacity={0.75}
-                onPress={() => router.push('/invoices/new')}
+                onPress={() => handleOpenInvoice(inv)}
               >
                 <View style={styles.invoiceIconCircle}>
                   <Ionicons name="document-text-outline" size={20} color={colors.brand.primary} />
@@ -386,6 +529,152 @@ export default function InvoicesTab() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* ==================================================================== */}
+      {/* INVOICE DETAILS & ACTIONS MODAL                                       */}
+      {/* ==================================================================== */}
+      <Modal visible={!!selectedInvoice} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalTitle}>{selectedInvoice?.invoiceNumber}</Text>
+                <Text style={styles.modalSubText}>
+                  Article 59 Statutory Tax Document
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setSelectedInvoice(null)}>
+                <Ionicons name="close" size={22} color={colors.neutral.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedInvoice && (
+              <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false}>
+                <View style={styles.detailSummaryBox}>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Customer</Text>
+                    <Text style={styles.detailVal}>{selectedInvoice.customerName}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Issue Date</Text>
+                    <Text style={styles.detailVal}>{selectedInvoice.issueDate}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Due Date</Text>
+                    <Text style={styles.detailVal}>{selectedInvoice.dueDate}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Status</Text>
+                    <Text style={[styles.detailVal, { color: colors.brand.primary }]}>
+                      {selectedInvoice.status}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.financialBreakdownCard}>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Net Taxable Amount</Text>
+                    <Text style={styles.detailVal}>
+                      {selectedInvoice.currency}{' '}
+                      {selectedInvoice.subtotalNet.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>UAE VAT (5%)</Text>
+                    <Text style={styles.detailVal}>
+                      {selectedInvoice.currency}{' '}
+                      {selectedInvoice.vatTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </Text>
+                  </View>
+                  <View style={[styles.detailRow, { borderTopWidth: 1, borderTopColor: colors.neutral.border, paddingTop: 8 }]}>
+                    <Text style={[styles.detailLabel, { fontWeight: '800', color: colors.neutral.textPrimary }]}>
+                      Grand Total
+                    </Text>
+                    <Text style={[styles.detailVal, { fontSize: 16, fontWeight: '900', color: colors.brand.primary }]}>
+                      {selectedInvoice.currency}{' '}
+                      {selectedInvoice.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </Text>
+                  </View>
+                  {selectedInvoice.amountPaid > 0 && (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Amount Paid</Text>
+                      <Text style={[styles.detailVal, { color: colors.semantic.successDark }]}>
+                        {selectedInvoice.currency}{' '}
+                        {selectedInvoice.amountPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Primary Lifecycle Actions */}
+                <View style={{ gap: 10, marginTop: 12 }}>
+                  {selectedInvoice.status === 'DRAFT' && (
+                    <TouchableOpacity
+                      style={styles.modalPrimaryBtn}
+                      onPress={handleIssueDraftInvoice}
+                      disabled={isActionBusy}
+                    >
+                      {isActionBusy ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Ionicons name="checkmark-done-circle-outline" size={18} color="#FFFFFF" />
+                          <Text style={styles.modalPrimaryBtnText}>Issue Official Tax Invoice</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  )}
+
+                  {(selectedInvoice.status === 'ISSUED' ||
+                    selectedInvoice.status === 'PARTIALLY_PAID' ||
+                    selectedInvoice.status === 'OVERDUE') && (
+                    <TouchableOpacity
+                      style={[styles.modalPrimaryBtn, { backgroundColor: colors.semantic.successDark }]}
+                      onPress={handleMarkInvoicePaid}
+                      disabled={isActionBusy}
+                    >
+                      {isActionBusy ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Ionicons name="cash-outline" size={18} color="#FFFFFF" />
+                          <Text style={styles.modalPrimaryBtnText}>Record Full Payment (Mark Paid)</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  )}
+
+                  <TouchableOpacity
+                    style={styles.modalSecondaryBtn}
+                    onPress={handleShareInvoicePdf}
+                    disabled={isActionBusy}
+                  >
+                    <Ionicons name="share-outline" size={18} color={colors.neutral.textPrimary} />
+                    <Text style={styles.modalSecondaryBtnText}>Download & Share PDF Invoice</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.modalSecondaryBtn}
+                    onPress={() => {
+                      const invNo = selectedInvoice.invoiceNumber;
+                      setSelectedInvoice(null);
+                      router.push({
+                        pathname: '/invoices/new',
+                        params: { docType: 'CREDIT_NOTE', refInvoice: invNo },
+                      });
+                    }}
+                  >
+                    <Ionicons name="document-text-outline" size={18} color="#0284C7" />
+                    <Text style={[styles.modalSecondaryBtnText, { color: '#0284C7' }]}>
+                      Issue Credit Note (Art. 60) Against #{selectedInvoice.invoiceNumber}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -686,5 +975,94 @@ const styles = StyleSheet.create({
   },
   statusTextDue: {
     color: '#D97706',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  modalCard: {
+    backgroundColor: colors.neutral.surface,
+    borderRadius: radii.xl,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.neutral.border,
+    ...shadows.cardHover,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: colors.neutral.textPrimary,
+  },
+  modalSubText: {
+    fontSize: 11,
+    color: colors.neutral.textSecondary,
+    marginTop: 2,
+  },
+  detailSummaryBox: {
+    backgroundColor: colors.neutral.canvas,
+    borderRadius: radii.md,
+    padding: 12,
+    gap: 8,
+    marginBottom: 12,
+  },
+  financialBreakdownCard: {
+    backgroundColor: colors.neutral.surface,
+    borderWidth: 1,
+    borderColor: colors.neutral.border,
+    borderRadius: radii.md,
+    padding: 12,
+    gap: 8,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  detailLabel: {
+    fontSize: 12,
+    color: colors.neutral.textSecondary,
+  },
+  detailVal: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.neutral.textPrimary,
+  },
+  modalPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: colors.brand.primary,
+    paddingVertical: 13,
+    borderRadius: radii.md,
+  },
+  modalPrimaryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  modalSecondaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: colors.neutral.canvas,
+    borderWidth: 1,
+    borderColor: colors.neutral.border,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+  },
+  modalSecondaryBtnText: {
+    color: colors.neutral.textPrimary,
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

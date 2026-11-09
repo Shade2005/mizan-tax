@@ -6,3 +6,6 @@ dist/
 !.env.example
 *.log
 *.tsbuildinfo
+*service-account*.json
+*service_account*.json
+firebase-*.json
