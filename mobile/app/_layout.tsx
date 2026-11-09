@@ -41,6 +41,13 @@ export default function RootLayout() {
                 }}
               >
                 <Stack.Screen
+                  name="index"
+                  options={{
+                    headerShown: false,
+                    animation: 'fade',
+                  }}
+                />
+                <Stack.Screen
                   name="auth/login"
                   options={{
                     headerShown: false,
@@ -52,6 +59,14 @@ export default function RootLayout() {
                   options={{
                     headerShown: false,
                     animation: 'slide_from_right',
+                  }}
+                />
+                <Stack.Screen
+                  name="onboarding/business"
+                  options={{
+                    headerShown: false,
+                    animation: 'slide_from_right',
+                    gestureEnabled: false, // Disallow gesture back to prevent skipping
                   }}
                 />
 

@@ -104,7 +104,12 @@ export default function LoginScreen() {
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       await refreshBusinesses();
-      router.replace('/(tabs)');
+      const existing = await MizanApi.getBusinesses().catch(() => []);
+      if (existing && existing.length > 0) {
+        router.replace('/(tabs)');
+      } else {
+        router.replace('/onboarding/business');
+      }
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       const friendlyMsg = getFirebaseAuthErrorMessage(err?.code || '', isRTL);

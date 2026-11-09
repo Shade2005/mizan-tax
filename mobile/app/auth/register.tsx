@@ -85,8 +85,8 @@ export default function RegisterScreen() {
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       await refreshBusinesses();
-      // Redirect to main tabs
-      router.replace('/(tabs)');
+      // Mandatory onboarding: user must configure their actual business before entering
+      router.replace('/onboarding/business');
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       const friendlyMsg = getFirebaseAuthErrorMessage(err?.code || '', isRTL);

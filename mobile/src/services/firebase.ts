@@ -22,7 +22,7 @@ import { getReactNativePersistence } from '@firebase/auth/dist/rn/index.js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const firebaseConfig = {
-  apiKey: 'AIzaSyDECSXEHF_IjUu62mhYkyvBMSQ0rAtiQWI',
+  apiKey: 'AIzaSyDECSXEHf_IjUu62mhYkyvBMSQ0rAtiQWI',
   authDomain: 'mizan-tax.firebaseapp.com',
   projectId: 'mizan-tax',
   storageBucket: 'mizan-tax.firebasestorage.app',

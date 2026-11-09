@@ -118,16 +118,47 @@ export class MizanApi {
     phone?: string;
     organisationName?: string;
   }): Promise<any> {
+    let idToken = '';
+    let firebaseUser: any = null;
+
     // 1. Create account in Firebase Auth
-    const userCred = await createUserWithEmailAndPassword(auth, payload.email.trim(), payload.password);
-    if (payload.fullName) {
+    try {
+      const userCred = await createUserWithEmailAndPassword(auth, payload.email.trim(), payload.password);
+      firebaseUser = userCred.user;
+      if (payload.fullName) {
+        try {
+          await updateProfile(firebaseUser, { displayName: payload.fullName.trim() });
+        } catch {}
+      }
+      idToken = await firebaseUser.getIdToken();
+      this.setAuthToken(idToken);
+      await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, idToken);
+    } catch (fbErr: any) {
+      console.warn('Firebase registration error, checking direct backend:', fbErr?.code || fbErr?.message);
+      // Fallback to direct backend registration
       try {
-        await updateProfile(userCred.user, { displayName: payload.fullName.trim() });
+        const directRes = await fetch(`${API_BASE_URL}/api/v1/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (directRes.ok) {
+          const directData = await directRes.json();
+          if (directData.accessToken) {
+            this.setAuthToken(directData.accessToken, directData.organisation?.id);
+            await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, directData.accessToken);
+            if (directData.organisation?.id) {
+              await AppStorage.setItem(STORAGE_KEY_ORG_ID, directData.organisation.id);
+            }
+            if (directData.user) {
+              await AppStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(directData.user));
+            }
+            return directData;
+          }
+        }
       } catch {}
+      throw fbErr;
     }
-    const idToken = await userCred.user.getIdToken();
-    this.setAuthToken(idToken);
-    await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, idToken);
 
     // 2. Synchronize account with PostgreSQL backend
     try {
@@ -151,20 +182,51 @@ export class MizanApi {
     }
 
     const fallbackUser = {
-      id: userCred.user.uid,
-      email: userCred.user.email,
-      fullName: payload.fullName || userCred.user.displayName || 'Taxpayer',
+      id: firebaseUser?.uid || 'user-default',
+      email: firebaseUser?.email || payload.email.trim(),
+      fullName: payload.fullName || firebaseUser?.displayName || 'Taxpayer',
     };
     await AppStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(fallbackUser));
     return { user: fallbackUser, accessToken: idToken };
   }
 
   public static async login(payload: { email: string; password: string }): Promise<any> {
+    let idToken = '';
+    let firebaseUser: any = null;
+
     // 1. Authenticate with Firebase Auth
-    const userCred = await signInWithEmailAndPassword(auth, payload.email.trim(), payload.password);
-    const idToken = await userCred.user.getIdToken();
-    this.setAuthToken(idToken);
-    await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, idToken);
+    try {
+      const userCred = await signInWithEmailAndPassword(auth, payload.email.trim(), payload.password);
+      firebaseUser = userCred.user;
+      idToken = await firebaseUser.getIdToken();
+      this.setAuthToken(idToken);
+      await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, idToken);
+    } catch (fbErr: any) {
+      console.warn('Firebase login error, checking direct backend:', fbErr?.code || fbErr?.message);
+      // Fallback to direct backend login
+      try {
+        const directRes = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (directRes.ok) {
+          const directData = await directRes.json();
+          if (directData.accessToken) {
+            this.setAuthToken(directData.accessToken, directData.organisation?.id);
+            await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, directData.accessToken);
+            if (directData.organisation?.id) {
+              await AppStorage.setItem(STORAGE_KEY_ORG_ID, directData.organisation.id);
+            }
+            if (directData.user) {
+              await AppStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(directData.user));
+            }
+            return directData;
+          }
+        }
+      } catch {}
+      throw fbErr;
+    }
 
     // 2. Synchronize profile and active organisation with PostgreSQL backend
     try {
@@ -188,9 +250,9 @@ export class MizanApi {
     }
 
     const fallbackUser = {
-      id: userCred.user.uid,
-      email: userCred.user.email,
-      fullName: userCred.user.displayName || 'Taxpayer',
+      id: firebaseUser?.uid || 'user-default',
+      email: firebaseUser?.email || payload.email.trim(),
+      fullName: firebaseUser?.displayName || 'Taxpayer',
     };
     await AppStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(fallbackUser));
     return { user: fallbackUser, accessToken: idToken };

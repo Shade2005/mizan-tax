@@ -55,6 +55,7 @@ interface BusinessContextType {
   activeBusiness: BusinessEntity | null;
   currentUser: UserProfile | null;
   isAuthenticated: boolean;
+  hasCompletedOnboarding: boolean;
   isLoading: boolean;
   error: string | null;
   currentUserKey: 'user-a' | 'user-b' | 'superadmin';
@@ -117,19 +118,25 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   /**
-   * Fetches businesses strictly for the authenticated tenant session
+   * Fetches businesses strictly for the authenticated session
    */
-  const fetchBusinesses = useCallback(async (userKey: 'user-a' | 'user-b' | 'superadmin' = currentUserKey) => {
+  const fetchBusinesses = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
       const hasStoredToken = await AppStorage.getItem(STORAGE_KEY_AUTH_TOKEN);
-      if (hasStoredToken) {
-        await MizanApi.ensureAuthenticated();
-        await loadUserProfile();
-      } else {
-        await MizanApi.ensureAuthenticated(userKey);
+      if (!hasStoredToken && !auth.currentUser) {
+        // Unauthenticated session: strictly do not load demo entities
+        setIsAuthenticated(false);
+        setCurrentUser(null);
+        setBusinesses([]);
+        setActiveBusinessIdState(null);
+        setIsLoading(false);
+        return;
       }
+
+      await MizanApi.ensureAuthenticated();
+      await loadUserProfile();
 
       const data = await MizanApi.getBusinesses();
 
@@ -179,7 +186,7 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } finally {
       setIsLoading(false);
     }
-  }, [currentUserKey, loadUserProfile]);
+  }, [loadUserProfile]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -188,26 +195,28 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const idToken = await firebaseUser.getIdToken();
           MizanApi.setAuthToken(idToken);
           await AppStorage.setItem(STORAGE_KEY_AUTH_TOKEN, idToken);
+          setIsAuthenticated(true);
           await loadUserProfile();
           await fetchBusinesses();
         } catch (e) {
           console.warn('Firebase auth state listener error:', e);
+          setIsLoading(false);
         }
       } else {
         const hasToken = await AppStorage.getItem(STORAGE_KEY_AUTH_TOKEN);
-        if (!hasToken) {
+        if (hasToken) {
+          setIsAuthenticated(true);
+          await loadUserProfile();
+          await fetchBusinesses();
+        } else {
           setIsAuthenticated(false);
           setCurrentUser(null);
+          setBusinesses([]);
+          setActiveBusinessIdState(null);
+          setIsLoading(false);
         }
       }
     });
-
-    (async () => {
-      const savedUserKey = (await AppStorage.getItem(STORAGE_KEY_USER_KEY)) as any;
-      const initialKey = savedUserKey === 'user-b' || savedUserKey === 'superadmin' ? savedUserKey : 'user-a';
-      setCurrentUserKey(initialKey);
-      await fetchBusinesses(initialKey);
-    })();
 
     return () => unsubscribe();
   }, [fetchBusinesses, loadUserProfile]);
@@ -292,7 +301,7 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setCurrentUserKey(userKey);
     await AppStorage.setItem(STORAGE_KEY_USER_KEY, userKey);
     await MizanApi.initSession(userKey);
-    await fetchBusinesses(userKey);
+    await fetchBusinesses();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
   }, [fetchBusinesses]);
 
@@ -306,6 +315,7 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   const activeBusiness = businesses.find((b) => b.id === activeBusinessId) || businesses[0] || null;
+  const hasCompletedOnboarding = isAuthenticated && businesses.length > 0;
 
   return (
     <BusinessContext.Provider
@@ -314,6 +324,7 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         activeBusiness,
         currentUser,
         isAuthenticated,
+        hasCompletedOnboarding,
         isLoading,
         error,
         currentUserKey,

@@ -4,15 +4,27 @@
 // Tabs: Home | Bookkeeping | Invoicing | Tax & Filings | More
 // ============================================================================
 
-import React from 'react';
-import { Tabs } from 'expo-router';
+import React, { useEffect } from 'react';
+import { Tabs, useRouter } from 'expo-router';
 import { StyleSheet } from 'react-native';
 import { colors } from '../../src/theme/tokens';
 import { useLocale } from '../../src/context/LocaleContext';
+import { useBusiness } from '../../src/context/BusinessContext';
 import { AnimatedTabButton, AnimatedTabIcon } from '../../src/animations';
 
 export default function TabsLayout() {
+  const router = useRouter();
   const { t } = useLocale();
+  const { isAuthenticated, businesses, isLoading } = useBusiness();
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!isAuthenticated) {
+      router.replace('/auth/login');
+    } else if (!businesses || businesses.length === 0) {
+      router.replace('/onboarding/business');
+    }
+  }, [isLoading, isAuthenticated, businesses, router]);
 
   return (
     <Tabs
