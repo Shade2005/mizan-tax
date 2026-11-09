@@ -4,6 +4,14 @@
 // ============================================================================
 
 import 'reflect-metadata';
+
+// Safely load environment files if present on disk (.env, Render secret files)
+try {
+  if (typeof process.loadEnvFile === 'function') {
+    process.loadEnvFile();
+  }
+} catch {}
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';

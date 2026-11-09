@@ -83,6 +83,22 @@ export class AuthController {
   ) {}
 
   @Public()
+  @Get('health')
+  @ApiOperation({ summary: 'Public Health check and environment probe' })
+  healthCheck() {
+    return {
+      status: 'ok',
+      hasDatabaseUrl: !!process.env.DATABASE_URL,
+      databaseUrlPrefix: process.env.DATABASE_URL ? process.env.DATABASE_URL.substring(0, 15) + '...' : null,
+      hasDirectUrl: !!process.env.DATABASE_URL_UNPOOLED,
+      hasJwtSecret: !!process.env.JWT_SECRET,
+      nodeEnv: process.env.NODE_ENV || 'development',
+      version: '1.0.2',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Public()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
