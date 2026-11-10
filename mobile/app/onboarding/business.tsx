@@ -552,7 +552,6 @@ export default function BusinessOnboardingScreen() {
         verificationStatus: 'REGISTRY_VERIFIED',
       });
 
-      await refreshBusinesses();
       AppPreferences.notification(Haptics.NotificationFeedbackType.Success);
 
       // Successfully registered business -> Navigate to Dashboard

@@ -424,12 +424,11 @@ export class MizanApi {
       try {
         const { FirestoreService } = require('./firestore.service');
         const list = await FirestoreService.getBusinesses();
-        // Return list directly (even if empty [] for a brand new account).
-        // Never fall through to sleeping external servers when authenticated with Firebase!
-        return list || [];
+        if (list && list.length > 0) {
+          return list;
+        }
       } catch (err: any) {
-        console.warn('Firestore read failed:', err?.message || err);
-        return [];
+        console.warn('Firestore read failed, attempting backend fallback:', err?.message || err);
       }
     }
 

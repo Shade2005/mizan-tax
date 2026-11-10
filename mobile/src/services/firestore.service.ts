@@ -106,7 +106,7 @@ export class FirestoreService {
     const isSbrEligible = revenue <= 3000000;
     const taxRate = isSbrEligible ? 0 : 9;
 
-    const record: FirestoreBusiness = {
+    const record: any = {
       id: businessId,
       ownerId,
       legalName: payload.legalName || 'Unnamed Entity',
@@ -114,14 +114,19 @@ export class FirestoreService {
       tradeLicenseNumber: payload.tradeLicenseNumber || `TL-${Date.now().toString().slice(-6)}`,
       legalEntityType: payload.legalEntityType || 'LLC',
       jurisdictionType: payload.jurisdictionType || 'MAINLAND',
-      licensingAuthority: payload.licensingAuthority || 'DET',
+      jurisdiction: payload.jurisdictionType || 'MAINLAND',
+      licensingAuthority: payload.licensingAuthority || 'Department of Economy and Tourism (DET)',
       emirate: payload.emirate || 'Dubai',
       annualRevenueEstimateAED: revenue,
+      turnover: revenue,
       vatTrn: payload.vatTrn || '',
       corporateTaxTrn: payload.corporateTaxTrn || '',
       isSmallBusinessReliefEligible: isSbrEligible,
+      isQualifyingFreeZonePerson: payload.jurisdictionType === 'FREE_ZONE' || payload.jurisdictionType === 'DESIGNATED_FREE_ZONE',
+      sbrPosture: isSbrEligible ? 'SBR_ELIGIBLE' : 'STANDARD_9_PERCENT',
       corporateTaxRatePercent: taxRate,
-      verificationStatus: payload.verificationStatus || 'UNVERIFIED',
+      verificationStatus: payload.verificationStatus || 'VERIFIED',
+      currency: 'AED',
       updatedAt: serverTimestamp(),
     };
 
@@ -131,7 +136,7 @@ export class FirestoreService {
     }
 
     await setDoc(businessRef, record, { merge: true });
-    return record;
+    return record as FirestoreBusiness;
   }
 
   /**
@@ -151,7 +156,26 @@ export class FirestoreService {
     const snapshot = await Promise.race([fetchPromise, timeoutPromise]);
     const list: FirestoreBusiness[] = [];
     snapshot.forEach((d) => {
-      list.push(d.data() as FirestoreBusiness);
+      const data = d.data() as any;
+      list.push({
+        id: data.id || d.id,
+        ownerId: data.ownerId,
+        legalName: data.legalName,
+        tradeName: data.tradeName || data.legalName,
+        tradeLicenseNumber: data.tradeLicenseNumber,
+        legalEntityType: data.legalEntityType || 'LLC',
+        jurisdictionType: data.jurisdictionType || data.jurisdiction || 'MAINLAND',
+        licensingAuthority: data.licensingAuthority || 'Department of Economy and Tourism (DET)',
+        emirate: data.emirate || 'Dubai',
+        annualRevenueEstimateAED: data.annualRevenueEstimateAED ?? data.turnover ?? 0,
+        vatTrn: data.vatTrn,
+        corporateTaxTrn: data.corporateTaxTrn,
+        isSmallBusinessReliefEligible: data.isSmallBusinessReliefEligible ?? true,
+        corporateTaxRatePercent: data.corporateTaxRatePercent ?? (data.isSmallBusinessReliefEligible ? 0 : 9),
+        verificationStatus: data.verificationStatus || 'VERIFIED',
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt,
+      } as FirestoreBusiness);
     });
 
     return list;

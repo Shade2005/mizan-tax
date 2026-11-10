@@ -49,6 +49,7 @@ export interface UserProfile {
 
 const STORAGE_KEY_ACTIVE_BIZ = 'mizan_active_business_id';
 const STORAGE_KEY_USER_KEY = 'mizan_current_user_key';
+const STORAGE_KEY_CACHED_BUSINESSES = 'mizan_cached_businesses';
 
 interface BusinessContextType {
   businesses: BusinessEntity[];
@@ -187,7 +188,28 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         icon: b.legalEntityType === 'NATURAL_PERSON' ? 'person-outline' : b.jurisdictionType === 'FREE_ZONE' ? 'globe-outline' : 'business-outline',
       }));
 
-      setBusinesses(mapped);
+      if (mapped.length > 0) {
+        setBusinesses(mapped);
+        await AppStorage.setItem(STORAGE_KEY_CACHED_BUSINESSES, JSON.stringify(mapped));
+      } else {
+        const cachedStr = await AppStorage.getItem(STORAGE_KEY_CACHED_BUSINESSES);
+        if (cachedStr) {
+          try {
+            const cachedList = JSON.parse(cachedStr);
+            if (Array.isArray(cachedList) && cachedList.length > 0) {
+              setBusinesses(cachedList);
+              const activeId = cachedList[0]?.id;
+              if (activeId) {
+                setActiveBusinessIdState(activeId);
+                await AppStorage.setItem(STORAGE_KEY_ACTIVE_BIZ, activeId);
+              }
+              setIsLoading(false);
+              return;
+            }
+          } catch {}
+        }
+        setBusinesses([]);
+      }
 
       // Restore or validate active business
       const storedActiveId = await AppStorage.getItem(STORAGE_KEY_ACTIVE_BIZ);
@@ -204,6 +226,19 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch (err: any) {
       console.warn('Failed to load businesses from backend:', err?.message || err);
       setError(err?.message || 'Failed to connect to Mizan business service');
+      
+      const cachedStr = await AppStorage.getItem(STORAGE_KEY_CACHED_BUSINESSES).catch(() => null);
+      if (cachedStr) {
+        try {
+          const cachedList = JSON.parse(cachedStr);
+          if (Array.isArray(cachedList) && cachedList.length > 0) {
+            setBusinesses(cachedList);
+            setActiveBusinessIdState(cachedList[0]?.id || null);
+            setIsLoading(false);
+            return;
+          }
+        } catch {}
+      }
       setBusinesses([]);
       setActiveBusinessIdState(null);
     } finally {
@@ -301,7 +336,9 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       setBusinesses((prev) => {
         const filtered = prev.filter((b) => b.id !== savedBusiness.id);
-        return [savedBusiness, ...filtered];
+        const updated = [savedBusiness, ...filtered];
+        AppStorage.setItem(STORAGE_KEY_CACHED_BUSINESSES, JSON.stringify(updated)).catch(() => {});
+        return updated;
       });
 
       setActiveBusinessIdState(savedBusiness.id);

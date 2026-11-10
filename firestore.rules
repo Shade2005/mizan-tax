@@ -24,17 +24,33 @@ rules_version = '2';
 // 2. Collection: /businesses/{businessId}
 //    Document ID: Unique business identifier / trade license record ID
 //    Fields:
+//      - id: string (optional, 1-100 chars, business entity identifier)
 //      - ownerId: string (required, immutable, matches creator's request.auth.uid)
 //      - legalName: string (required, 1-200 chars, legal entity name)
+//      - tradeName: string (optional, 1-200 chars, trade/commercial name)
 //      - tradeLicenseNumber: string (optional, 1-100 chars)
+//      - legalEntityType: string (optional, 1-100 chars, e.g. LLC, PJSC, ESTABLISHMENT)
 //      - jurisdiction: string (optional, 1-50 chars, e.g. MAINLAND, FREE_ZONE)
-//      - licensingAuthority: string (optional, 1-100 chars, e.g. DED, ADED, DMCC)
+//      - jurisdictionType: string (optional, 1-50 chars, e.g. MAINLAND, FREE_ZONE, DESIGNATED_FREE_ZONE)
+//      - licensingAuthority: string (optional, 1-100 chars, e.g. DET, ADED, DMCC)
+//      - emirate: string (optional, 1-50 chars, e.g. Dubai, Abu Dhabi)
 //      - turnover: number (optional, >= 0, annual revenue in AED)
+//      - annualRevenueEstimateAED: number (optional, >= 0, annual revenue in AED)
 //      - vatTrn: string (optional, 1-30 chars, 15-digit FTA VAT TRN)
 //      - corporateTaxTrn: string (optional, 1-30 chars, 15-digit FTA Corporate Tax TRN)
+//      - corporateTaxRatePercent: number (optional, >= 0, statutory CT rate e.g. 0 or 9)
+//      - verificationStatus: string (optional, 1-50 chars)
+//      - issueDate: timestamp | string (optional, <= 50 chars)
+//      - expiryDate: timestamp | string (optional, <= 50 chars)
+//      - address: string (optional, <= 500 chars)
+//      - businessActivities: list (optional, max 50 items)
+//      - taxRegime: string (optional, <= 200 chars)
 //      - sbrPosture: string | bool | map (optional, Small Business Relief posture)
 //      - isQualifyingFreeZonePerson: bool (optional)
+//      - isQfzpEligible: bool (optional)
 //      - isSmallBusinessReliefEligible: bool (optional)
+//      - taxPeriodStart: string (optional, <= 50 chars)
+//      - taxPeriodEnd: string (optional, <= 50 chars)
 //      - accountingMethod: string (optional, 1-50 chars, e.g. ACCRUAL, CASH)
 //      - currency: string (optional, 1-10 chars, default AED)
 //      - createdAt: timestamp | string (optional)
@@ -209,22 +225,42 @@ service cloud.firestore {
     // Validates Business Profile Schema & Statutory UAE Constraints
     function isValidBusiness(data) {
       let allowedKeys = [
-        'ownerId', 'legalName', 'tradeLicenseNumber', 'jurisdiction',
-        'licensingAuthority', 'turnover', 'vatTrn', 'corporateTaxTrn',
-        'sbrPosture', 'isQualifyingFreeZonePerson', 'isSmallBusinessReliefEligible',
+        'id', 'ownerId', 'legalName', 'tradeName', 'tradeLicenseNumber',
+        'legalEntityType', 'jurisdiction', 'jurisdictionType', 'licensingAuthority',
+        'emirate', 'turnover', 'annualRevenueEstimateAED', 'vatTrn',
+        'corporateTaxTrn', 'sbrPosture', 'isQualifyingFreeZonePerson',
+        'isSmallBusinessReliefEligible', 'isQfzpEligible', 'corporateTaxRatePercent',
+        'verificationStatus', 'issueDate', 'expiryDate', 'address',
+        'businessActivities', 'taxRegime', 'taxPeriodStart', 'taxPeriodEnd',
         'accountingMethod', 'currency', 'createdAt', 'updatedAt'
       ];
       return data.keys().hasOnly(allowedKeys) &&
         ('ownerId' in data) && data.ownerId == request.auth.uid &&
         ('legalName' in data) && isValidString(data.legalName, 1, 200) &&
+        isOptionalString(data, 'id', 1, 100) &&
+        isOptionalString(data, 'tradeName', 1, 200) &&
         isOptionalString(data, 'tradeLicenseNumber', 1, 100) &&
+        isOptionalString(data, 'legalEntityType', 1, 100) &&
         isOptionalString(data, 'jurisdiction', 1, 50) &&
+        isOptionalString(data, 'jurisdictionType', 1, 50) &&
         isOptionalString(data, 'licensingAuthority', 1, 100) &&
+        isOptionalString(data, 'emirate', 1, 50) &&
         isOptionalNumber(data, 'turnover', 0) &&
+        isOptionalNumber(data, 'annualRevenueEstimateAED', 0) &&
+        isOptionalNumber(data, 'corporateTaxRatePercent', 0) &&
+        isOptionalString(data, 'verificationStatus', 1, 50) &&
+        isOptionalTimestamp(data, 'issueDate') &&
+        isOptionalTimestamp(data, 'expiryDate') &&
+        (!('address' in data) || (data.address is string && data.address.size() <= 500)) &&
+        (!('businessActivities' in data) || (data.businessActivities is list && data.businessActivities.size() <= 50)) &&
+        (!('taxRegime' in data) || (data.taxRegime is string && data.taxRegime.size() <= 200)) &&
+        isOptionalBool(data, 'isQualifyingFreeZonePerson') &&
+        isOptionalBool(data, 'isQfzpEligible') &&
+        isOptionalBool(data, 'isSmallBusinessReliefEligible') &&
+        (!('taxPeriodStart' in data) || (data.taxPeriodStart is string && data.taxPeriodStart.size() <= 50)) &&
+        (!('taxPeriodEnd' in data) || (data.taxPeriodEnd is string && data.taxPeriodEnd.size() <= 50)) &&
         isOptionalString(data, 'vatTrn', 1, 30) &&
         isOptionalString(data, 'corporateTaxTrn', 1, 30) &&
-        isOptionalBool(data, 'isQualifyingFreeZonePerson') &&
-        isOptionalBool(data, 'isSmallBusinessReliefEligible') &&
         isOptionalString(data, 'accountingMethod', 1, 50) &&
         isOptionalString(data, 'currency', 1, 10) &&
         (!('sbrPosture' in data) || (data.sbrPosture is string && data.sbrPosture.size() <= 100) || (data.sbrPosture is bool) || (data.sbrPosture is map)) &&
