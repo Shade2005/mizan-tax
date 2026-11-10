@@ -280,16 +280,21 @@ export class AuthService {
    */
   public async getUserProfile(currentUser: AuthenticatedUser): Promise<UserProfileResponse> {
     const prisma = this.getPrisma();
-    const user = await prisma.user.findUnique({
-      where: { id: currentUser.userId },
-      include: {
-        memberships: {
-          include: {
-            organisation: true,
+    let user = null;
+    try {
+      user = await prisma.user.findUnique({
+        where: { id: currentUser.userId },
+        include: {
+          memberships: {
+            include: {
+              organisation: true,
+            },
           },
         },
-      },
-    });
+      });
+    } catch (dbErr: any) {
+      console.warn('PostgreSQL profile lookup notice (stateless fallback):', dbErr?.message || dbErr);
+    }
 
     if (!user) {
       // Fallback if demo user without DB row

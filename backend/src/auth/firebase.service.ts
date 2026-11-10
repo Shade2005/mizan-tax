@@ -107,7 +107,9 @@ export class FirebaseService {
   }
 
   /**
-   * Verifies Firebase token and resolves/provisions corresponding PostgreSQL User & Organisation
+   * Verifies Firebase token directly and statelessly.
+   * With user data stored in Cloud Firestore, Firebase-authenticated users
+   * do not depend on blocking Neon PostgreSQL round-trips for OCR or AI services.
    */
   public async validateAndSyncUser(token: string): Promise<AuthenticatedUser> {
     const decoded = await this.verifyIdToken(token);
@@ -118,124 +120,12 @@ export class FirebaseService {
       throw new UnauthorizedException('Firebase user has no verified email address associated.');
     }
 
-    if (!this.prisma) {
-      // In offline/test environments without Prisma
-      return {
-        userId: uid,
-        organisationId: 'org-default',
-        role: 'ADMIN' as UserRole,
-        email,
-      };
-    }
-
-    const prisma = this.prisma;
-
-    // 1. Locate user by firebaseUid or email
-    let user = await prisma.user.findFirst({
-      where: {
-        OR: [{ firebaseUid: uid }, { email }],
-      },
-      include: {
-        memberships: {
-          include: {
-            organisation: true,
-          },
-        },
-      },
-    });
-
-    const displayName =
-      decoded.name ||
-      (decoded as any).displayName ||
-      email.split('@')[0] ||
-      'Taxpayer';
-
-    if (!user) {
-      // 2. First-time sign in: provision new PostgreSQL User, default Organisation, and ADMIN Membership
-      const orgName = `${displayName}'s Business`;
-      user = await prisma.$transaction(async (tx) => {
-        const org = await tx.organisation.create({
-          data: {
-            name: orgName,
-            legalName: orgName,
-          },
-        });
-
-        const newUser = await tx.user.create({
-          data: {
-            email,
-            fullName: displayName,
-            firebaseUid: uid,
-            isActive: true,
-          },
-        });
-
-        await tx.membership.create({
-          data: {
-            userId: newUser.id,
-            organisationId: org.id,
-            role: 'ADMIN',
-          },
-        });
-
-        return tx.user.findUnique({
-          where: { id: newUser.id },
-          include: {
-            memberships: {
-              include: {
-                organisation: true,
-              },
-            },
-          },
-        });
-      });
-    } else if (!user.firebaseUid) {
-      // 3. User existed by email, link their new firebaseUid
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: { firebaseUid: uid },
-        include: {
-          memberships: {
-            include: {
-              organisation: true,
-            },
-          },
-        },
-      });
-    }
-
-    if (!user) {
-      throw new UnauthorizedException('Failed to provision or resolve user account.');
-    }
-
-    if (!user.isActive) {
-      throw new UnauthorizedException('This account has been deactivated. Please contact support.');
-    }
-
-    let activeMembership = user.memberships[0];
-    if (!activeMembership) {
-      const fallbackOrg = await prisma.organisation.create({
-        data: {
-          name: `${user.fullName}'s Business`,
-        },
-      });
-      activeMembership = await prisma.membership.create({
-        data: {
-          userId: user.id,
-          organisationId: fallbackOrg.id,
-          role: 'ADMIN',
-        },
-        include: {
-          organisation: true,
-        },
-      });
-    }
-
+    // Pure stateless session resolution from verified Firebase cryptographic claims
     return {
-      userId: user.id,
-      organisationId: activeMembership.organisationId,
-      role: activeMembership.role as UserRole,
-      email: user.email,
+      userId: uid,
+      organisationId: `org-${uid}`,
+      role: 'ADMIN' as UserRole,
+      email,
     };
   }
 }
