@@ -4,6 +4,7 @@
 // ============================================================================
 
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsString,
   IsEnum,
@@ -13,7 +14,7 @@ import {
   IsDateString,
   Min,
 } from 'class-validator';
-import { LegalEntityTypeDto, JurisdictionTypeDto } from './create-trade-license.dto';
+import { LegalEntityTypeDto, JurisdictionTypeDto, normalizeDateToISO } from './create-trade-license.dto';
 
 export class UpdateBusinessDto {
   @ApiPropertyOptional({ description: 'Business Legal Name (English)', example: 'Al Nahda Trading LLC' })
@@ -47,11 +48,13 @@ export class UpdateBusinessDto {
   emirate?: string;
 
   @ApiPropertyOptional({ description: 'License Issue Date (ISO string)', example: '2024-05-15' })
+  @Transform(({ value }) => normalizeDateToISO(value))
   @IsDateString()
   @IsOptional()
   issueDate?: string;
 
   @ApiPropertyOptional({ description: 'License Expiry Date (ISO string)', example: '2027-05-14' })
+  @Transform(({ value }) => normalizeDateToISO(value))
   @IsDateString()
   @IsOptional()
   expiryDate?: string;

@@ -4,6 +4,7 @@
 // ============================================================================
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsString,
   IsNotEmpty,
@@ -14,6 +15,37 @@ import {
   IsDateString,
   Min,
 } from 'class-validator';
+
+export function normalizeDateToISO(raw: any): string | undefined {
+  if (!raw) return undefined;
+  const s = String(raw).trim();
+  if (!s) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // Match DD/MM/YYYY or DD-MM-YYYY
+  const dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmy) {
+    const day = dmy[1].padStart(2, '0');
+    const month = dmy[2].padStart(2, '0');
+    const year = dmy[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  // Match YYYY/MM/DD
+  const ymd = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (ymd) {
+    const year = ymd[1];
+    const month = ymd[2].padStart(2, '0');
+    const day = ymd[3].padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    return d.toISOString().split('T')[0];
+  }
+  return undefined;
+}
 
 export enum LegalEntityTypeDto {
   NATURAL_PERSON = 'NATURAL_PERSON',
@@ -70,11 +102,13 @@ export class CreateTradeLicenseDto {
   emirate?: string;
 
   @ApiPropertyOptional({ description: 'License Issue Date (ISO string)', example: '2024-05-15' })
+  @Transform(({ value }) => normalizeDateToISO(value))
   @IsDateString()
   @IsOptional()
   issueDate?: string;
 
   @ApiPropertyOptional({ description: 'License Expiry Date (ISO string)', example: '2027-05-14' })
+  @Transform(({ value }) => normalizeDateToISO(value))
   @IsDateString()
   @IsOptional()
   expiryDate?: string;

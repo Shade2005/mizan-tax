@@ -12,6 +12,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ExtractTradeLicenseDto, ExtractReceiptDto } from './ocr.dto';
+import { normalizeDateToISO } from '../business/dto/create-trade-license.dto';
 
 interface RateLimitTracker {
   count: number;
@@ -163,8 +164,8 @@ Analyze this document image and extract:
 - businessNameAr: string (trade name in Arabic if present, otherwise empty)
 - legalForm: string (e.g. 'Limited Liability Company (LLC)', 'Free Zone Company (FZCO)', 'Sole Establishment')
 - jurisdiction: string (e.g. 'Mainland (Dubai)', 'DMCC Free Zone', 'ADGM', 'DIFC', 'Sharjah Mainland', etc.)
-- issueDate: string (e.g. '15 Jan 2024')
-- expiryDate: string (e.g. '14 Jan 2025')
+- issueDate: string in YYYY-MM-DD format (e.g. '2024-01-15')
+- expiryDate: string in YYYY-MM-DD format (e.g. '2025-01-14')
 
 Return ONLY a valid JSON object matching this schema. If the image is not a trade license or unreadable, return {"error": "UNREADABLE"}.`;
 
@@ -211,8 +212,8 @@ Return ONLY a valid JSON object matching this schema. If the image is not a trad
             businessNameAr: parsed.businessNameAr || '',
             legalForm: parsed.legalForm || 'Limited Liability Company (LLC)',
             jurisdiction: parsed.jurisdiction || 'Mainland (Dubai)',
-            issueDate: parsed.issueDate || '',
-            expiryDate: parsed.expiryDate || '',
+            issueDate: normalizeDateToISO(parsed.issueDate) || parsed.issueDate || '',
+            expiryDate: normalizeDateToISO(parsed.expiryDate) || parsed.expiryDate || '',
             extractionMethod: 'GEMINI_3_5_FLASH_LITE',
             extractionStatus: 'SUCCESS',
           };
@@ -256,8 +257,8 @@ Return ONLY a valid JSON object matching this schema. If the image is not a trad
                 businessNameAr: parsed.businessNameAr || '',
                 legalForm: parsed.legalForm || 'Limited Liability Company (LLC)',
                 jurisdiction: parsed.jurisdiction || 'Mainland (Dubai)',
-                issueDate: parsed.issueDate || '',
-                expiryDate: parsed.expiryDate || '',
+                issueDate: normalizeDateToISO(parsed.issueDate) || parsed.issueDate || '',
+                expiryDate: normalizeDateToISO(parsed.expiryDate) || parsed.expiryDate || '',
                 extractionMethod: 'GEMINI_1_5_FLASH_FALLBACK',
                 extractionStatus: 'SUCCESS',
               };

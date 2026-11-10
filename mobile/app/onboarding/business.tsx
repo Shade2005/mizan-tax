@@ -33,6 +33,37 @@ import { VisionOcr } from '../../src/services/visionOcr';
 import { EdgeOcrParser } from '../../src/services/edgeOcrParser';
 import { AppPreferences } from '../../src/utils/preferences';
 
+function normalizeDateToISO(raw?: string | null): string {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // Match DD/MM/YYYY or DD-MM-YYYY
+  const dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmy) {
+    const day = dmy[1].padStart(2, '0');
+    const month = dmy[2].padStart(2, '0');
+    const year = dmy[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  // Match YYYY/MM/DD
+  const ymd = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (ymd) {
+    const year = ymd[1];
+    const month = ymd[2].padStart(2, '0');
+    const day = ymd[3].padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    return d.toISOString().split('T')[0];
+  }
+  return s;
+}
+
 const LEGAL_ENTITY_TYPES = [
   { id: 'LLC', labelEn: 'Limited Liability Company (LLC)', labelAr: 'شركة ذات مسؤولية محدودة (ش.ذ.م.م)' },
   { id: 'SOLE_ESTABLISHMENT', labelEn: 'Sole Establishment', labelAr: 'مؤسسة فردية' },
@@ -201,7 +232,7 @@ export default function BusinessOnboardingScreen() {
         }
 
         if (extracted.expiryDate) {
-          setExpiryDate(extracted.expiryDate);
+          setExpiryDate(normalizeDateToISO(extracted.expiryDate));
         }
 
         // Legal structure heuristic matching
@@ -509,7 +540,7 @@ export default function BusinessOnboardingScreen() {
         licensingAuthority,
         emirate,
         tradeLicenseNumber: tradeLicenseNumber.trim(),
-        expiryDate,
+        expiryDate: normalizeDateToISO(expiryDate) || undefined,
         annualRevenueEstimateAED: parsedRevenue,
         vatTrn: hasVatTrn && vatTrn.trim() ? vatTrn.trim() : undefined,
         corporateTaxTrn: hasCorporateTaxTrn && corporateTaxTrn.trim() ? corporateTaxTrn.trim() : undefined,
