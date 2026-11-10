@@ -151,8 +151,11 @@ export class OcrService {
       );
     }
 
+    let lastError = '';
+    let lastStatus = 500;
+
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`;
       const prompt = `You are an expert UAE Trade Licence and commercial register document parser.
 Analyze this document image and extract:
 - licenseNumber: string (official licence or registration number)
@@ -189,7 +192,7 @@ Return ONLY a valid JSON object matching this schema. If the image is not a trad
         const rawJson = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (rawJson) {
           const parsed = JSON.parse(rawJson);
-          if (parsed.error === 'UNREADABLE' || !parsed.businessName || !parsed.licenseNumber) {
+          if (parsed.error === 'UNREADABLE' || (!parsed.businessName && !parsed.businessNameAr && !parsed.licenseNumber)) {
             throw new HttpException(
               {
                 statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
@@ -203,23 +206,25 @@ Return ONLY a valid JSON object matching this schema. If the image is not a trad
           }
 
           return {
-            licenseNumber: parsed.licenseNumber,
-            businessName: parsed.businessName,
+            licenseNumber: parsed.licenseNumber || '',
+            businessName: parsed.businessName || parsed.businessNameAr || '',
             businessNameAr: parsed.businessNameAr || '',
             legalForm: parsed.legalForm || 'Limited Liability Company (LLC)',
             jurisdiction: parsed.jurisdiction || 'Mainland (Dubai)',
             issueDate: parsed.issueDate || '',
             expiryDate: parsed.expiryDate || '',
-            extractionMethod: 'GEMINI_SERVER_VISION',
+            extractionMethod: 'GEMINI_3_5_FLASH_LITE',
             extractionStatus: 'SUCCESS',
           };
         }
       } else {
         const errBody = await res.text().catch(() => '');
-        console.warn(`Primary Gemini OCR failed (HTTP ${res.status}):`, errBody);
+        lastStatus = res.status;
+        lastError = errBody.slice(0, 300);
+        console.warn(`Primary Gemini 3.5 Flash-Lite failed (HTTP ${res.status}):`, errBody);
 
-        // Fallback to gemini-2.0-flash
-        const fbUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+        // Fallback to gemini-1.5-flash
+        const fbUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
         const fbRes = await fetch(fbUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -244,34 +249,39 @@ Return ONLY a valid JSON object matching this schema. If the image is not a trad
           const fbJson = fbData.candidates?.[0]?.content?.parts?.[0]?.text;
           if (fbJson) {
             const parsed = JSON.parse(fbJson);
-            if (parsed && parsed.error !== 'UNREADABLE' && (parsed.businessName || parsed.licenseNumber)) {
+            if (parsed && parsed.error !== 'UNREADABLE' && (parsed.businessName || parsed.businessNameAr || parsed.licenseNumber)) {
               return {
                 licenseNumber: parsed.licenseNumber || '',
-                businessName: parsed.businessName || '',
+                businessName: parsed.businessName || parsed.businessNameAr || '',
                 businessNameAr: parsed.businessNameAr || '',
                 legalForm: parsed.legalForm || 'Limited Liability Company (LLC)',
                 jurisdiction: parsed.jurisdiction || 'Mainland (Dubai)',
                 issueDate: parsed.issueDate || '',
                 expiryDate: parsed.expiryDate || '',
-                extractionMethod: 'GEMINI_SERVER_VISION_FALLBACK',
+                extractionMethod: 'GEMINI_1_5_FLASH_FALLBACK',
                 extractionStatus: 'SUCCESS',
               };
             }
           }
+        } else {
+          const fbErr = await fbRes.text().catch(() => '');
+          lastStatus = fbRes.status;
+          lastError = fbErr.slice(0, 300);
+          console.warn(`Fallback Gemini 1.5 Flash failed (HTTP ${fbRes.status}):`, fbErr);
         }
       }
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
       console.warn('Backend Gemini OCR network error:', err?.message || err);
+      lastError = err?.message || String(err);
     }
 
-    // Explicit non-fabrication failure: Do NOT return fictitious license numbers
+    // Explicit non-fabrication failure with exact Google API diagnostic passthrough
     throw new HttpException(
       {
         statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
         error: 'Unprocessable Entity',
-        message:
-          'Trade license extraction failed: The image could not be parsed with statutory confidence. Please enter your license details manually.',
+        message: `Trade license extraction notice (${lastStatus}): ${lastError || 'The document could not be parsed with statutory confidence.'}`,
         extractionStatus: 'FAILED',
       },
       HttpStatus.UNPROCESSABLE_ENTITY
@@ -305,7 +315,7 @@ Return ONLY a valid JSON object matching this schema. If the image is not a trad
     }
 
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`;
       const prompt = `You are an expert UAE VAT receipt and tax invoice parser.
 Analyze this receipt or tax invoice image and extract:
 - supplierName: string (official merchant / trade name, e.g. 'Carrefour Hypermarket LLC')

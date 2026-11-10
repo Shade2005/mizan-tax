@@ -18,6 +18,7 @@ node_modules/
 *service-account*.json
 *service_account*.json
 firebase-*.json
+trade-license*.pdf
 
 # Build Artifacts
 dist/
