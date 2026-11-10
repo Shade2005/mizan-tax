@@ -179,8 +179,8 @@ export default function BusinessOnboardingScreen() {
     setIsOcrProcessing(true);
     setOcrStatusText(
       isRTL
-        ? 'جارٍ فحص واستخراج بيانات الرخصة التجارية بالذكاء الاصطناعي...'
-        : 'Analyzing UAE Trade License with AI Vision OCR...'
+        ? 'جارٍ استخراج البيانات...'
+        : 'Extracting details...'
     );
     setErrorMessage(null);
 
@@ -227,8 +227,8 @@ export default function BusinessOnboardingScreen() {
 
         setExtractedBadge(
           isRTL
-            ? '✨ تم استخراج بيانات رخصتك بنجاح! راجع البيانات وأكمل النموذج أدناه.'
-            : '✨ Trade License recognized! Review your details and complete the steps below.'
+            ? '✨ تم استخراج البيانات بنجاح! راجع البيانات وأكمل النموذج أدناه.'
+            : '✨ Details extracted! Review your details and complete the steps below.'
         );
         AppPreferences.notification(Haptics.NotificationFeedbackType.Success);
       }

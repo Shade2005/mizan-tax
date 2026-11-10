@@ -172,13 +172,13 @@ Return ONLY a valid JSON object matching this schema. If the image is not a trad
           contents: [
             {
               parts: [
-                { inline_data: { mime_type: mimeType, data: cleanB64 } },
+                { inlineData: { mimeType, data: cleanB64 } },
                 { text: prompt },
               ],
             },
           ],
           generationConfig: {
-            response_mime_type: 'application/json',
+            responseMimeType: 'application/json',
             temperature: 0.1,
           },
         }),
@@ -227,13 +227,13 @@ Return ONLY a valid JSON object matching this schema. If the image is not a trad
             contents: [
               {
                 parts: [
-                  { inline_data: { mime_type: mimeType, data: cleanB64 } },
+                  { inlineData: { mimeType, data: cleanB64 } },
                   { text: prompt },
                 ],
               },
             ],
             generationConfig: {
-              response_mime_type: 'application/json',
+              responseMimeType: 'application/json',
               temperature: 0.1,
             },
           }),
@@ -331,13 +331,13 @@ Return ONLY a valid JSON object matching this schema. If unreadable, return {"er
           contents: [
             {
               parts: [
-                { inline_data: { mime_type: mimeType, data: cleanB64 } },
+                { inlineData: { mimeType, data: cleanB64 } },
                 { text: prompt },
               ],
             },
           ],
           generationConfig: {
-            response_mime_type: 'application/json',
+            responseMimeType: 'application/json',
             temperature: 0.1,
           },
         }),

@@ -102,7 +102,7 @@ export class AuthController {
       hasJwtSecret: !!process.env.JWT_SECRET,
       hasGeminiApiKey: !!process.env.GEMINI_API_KEY,
       nodeEnv: process.env.NODE_ENV || 'development',
-      version: '1.0.5',
+      version: '1.0.6',
       timestamp: new Date().toISOString(),
     };
   }
