@@ -25,6 +25,7 @@ if (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('.neon.tech') 
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { JwtUtil } from './auth/jwt.util';
 
@@ -33,6 +34,10 @@ async function bootstrap() {
   JwtUtil.validateConfiguration();
 
   const app = await NestFactory.create(AppModule);
+
+  // Increase payload size limit for base64 Trade License & Tax Receipt PDFs/images (50MB)
+  app.use(json({ limit: '50mb' }));
+  app.use(urlencoded({ extended: true, limit: '50mb' }));
 
   // Configured trusted origins allowlist (replaces wildcard '*')
   const defaultAllowedOrigins = [

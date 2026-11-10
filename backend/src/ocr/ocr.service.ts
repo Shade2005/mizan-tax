@@ -214,6 +214,51 @@ Return ONLY a valid JSON object matching this schema. If the image is not a trad
             extractionStatus: 'SUCCESS',
           };
         }
+      } else {
+        const errBody = await res.text().catch(() => '');
+        console.warn(`Primary Gemini OCR failed (HTTP ${res.status}):`, errBody);
+
+        // Fallback to gemini-2.0-flash
+        const fbUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+        const fbRes = await fetch(fbUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { inline_data: { mime_type: mimeType, data: cleanB64 } },
+                  { text: prompt },
+                ],
+              },
+            ],
+            generationConfig: {
+              response_mime_type: 'application/json',
+              temperature: 0.1,
+            },
+          }),
+        });
+
+        if (fbRes.ok) {
+          const fbData = await fbRes.json();
+          const fbJson = fbData.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (fbJson) {
+            const parsed = JSON.parse(fbJson);
+            if (parsed && parsed.error !== 'UNREADABLE' && (parsed.businessName || parsed.licenseNumber)) {
+              return {
+                licenseNumber: parsed.licenseNumber || '',
+                businessName: parsed.businessName || '',
+                businessNameAr: parsed.businessNameAr || '',
+                legalForm: parsed.legalForm || 'Limited Liability Company (LLC)',
+                jurisdiction: parsed.jurisdiction || 'Mainland (Dubai)',
+                issueDate: parsed.issueDate || '',
+                expiryDate: parsed.expiryDate || '',
+                extractionMethod: 'GEMINI_SERVER_VISION_FALLBACK',
+                extractionStatus: 'SUCCESS',
+              };
+            }
+          }
+        }
       }
     } catch (err: any) {
       if (err instanceof HttpException) throw err;

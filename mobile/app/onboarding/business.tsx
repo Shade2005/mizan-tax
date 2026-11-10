@@ -24,7 +24,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import { File } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { SafeAreaView } from '../../src/components/SafeAreaView';
 import { colors, radii, shadows, spacing } from '../../src/theme/tokens';
 import { useLocale } from '../../src/context/LocaleContext';
@@ -185,17 +185,10 @@ export default function BusinessOnboardingScreen() {
     setErrorMessage(null);
 
     try {
-      let extracted: any = null;
-      try {
-        extracted = await VisionOcr.extractTradeLicense(base64Data, mimeType);
-      } catch (backendErr: any) {
-        console.warn('Backend Vision OCR note:', backendErr?.message || backendErr);
-        // Fallback to local heuristic parser
-        extracted = EdgeOcrParser.parseTradeLicense(base64Data.slice(0, 500));
-      }
+      const extracted = await VisionOcr.extractTradeLicense(base64Data, mimeType);
 
       if (extracted) {
-        const foundName = extracted.businessName || extracted.businessNameEn;
+        const foundName = extracted.businessName || extracted.businessNameAr;
         if (foundName) {
           setLegalName(foundName);
           setTradeName(foundName);
@@ -248,9 +241,9 @@ export default function BusinessOnboardingScreen() {
       console.warn('OCR Extraction error:', ocrErr);
       Alert.alert(
         isRTL ? 'تنبيه استخراج المستند' : 'Trade License OCR Notice',
-        isRTL
+        ocrErr?.message || (isRTL
           ? 'تم استلام المستند ولكن تعذر التعرف على بعض الحقول بدقة. يرجى إكمال النموذج يدوياً.'
-          : 'Document received. Some fields could not be recognized with statutory confidence. Please complete details manually.',
+          : 'Document received. Some fields could not be recognized with statutory confidence. Please complete details manually.'),
         [
           {
             text: isRTL ? 'إكمال النموذج يدوياً' : 'Complete Manually',
@@ -357,26 +350,10 @@ export default function BusinessOnboardingScreen() {
         const isPdf = asset.name?.toLowerCase().endsWith('.pdf') || asset.mimeType?.includes('pdf');
         const mimeType = isPdf ? 'application/pdf' : asset.mimeType || 'image/jpeg';
 
-        // Read file contents as base64 using the modern Expo SDK 58 File API with resilient blob fallback
-        let base64 = '';
-        try {
-          const file = new File(asset.uri);
-          base64 = await file.base64();
-        } catch (fileErr) {
-          console.warn('File.base64() fallback to fetch blob:', fileErr);
-          const response = await fetch(asset.uri);
-          const blob = await response.blob();
-          base64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              const resStr = (reader.result as string) || '';
-              const pureBase64 = resStr.includes(',') ? resStr.split(',')[1] : resStr;
-              resolve(pureBase64);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
-        }
+        // Read file contents as base64 using the official expo-file-system/legacy API
+        const base64 = await FileSystem.readAsStringAsync(asset.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
 
         await processLicenseImage(base64, mimeType);
       }

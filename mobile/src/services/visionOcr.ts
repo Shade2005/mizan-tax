@@ -5,7 +5,9 @@
 // Zero fabricated financial data on failure
 // ============================================================================
 
-import { API_BASE_URL, MizanApi } from './api';
+import { API_BASE_URL, MizanApi, STORAGE_KEY_AUTH_TOKEN } from './api';
+import { auth } from './firebase';
+import { AppStorage } from '../utils/storage';
 
 export interface ExtractedTradeLicense {
   licenseNumber: string;
@@ -28,13 +30,39 @@ export interface ExtractedReceipt {
 
 export class VisionOcr {
   /**
+   * Resolves the freshest available auth token for secure API requests
+   */
+  private static async resolveAuthToken(): Promise<string | null> {
+    let token = MizanApi.getAuthToken();
+    if (!token && auth?.currentUser) {
+      try {
+        token = await auth.currentUser.getIdToken();
+        if (token) {
+          MizanApi.setAuthToken(token);
+        }
+      } catch (err) {
+        console.warn('Could not retrieve Firebase token for OCR:', err);
+      }
+    }
+    if (!token) {
+      try {
+        token = await AppStorage.getItem(STORAGE_KEY_AUTH_TOKEN);
+        if (token) {
+          MizanApi.setAuthToken(token);
+        }
+      } catch {}
+    }
+    return token;
+  }
+
+  /**
    * Securely delegates Trade License extraction to the authenticated Mizan backend
    */
   public static async extractTradeLicense(
     base64Data: string,
     mimeType: string = 'image/jpeg'
   ): Promise<ExtractedTradeLicense> {
-    const token = MizanApi.getAuthToken();
+    const token = await this.resolveAuthToken();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
@@ -77,7 +105,7 @@ export class VisionOcr {
     base64Data: string,
     mimeType: string = 'image/jpeg'
   ): Promise<ExtractedReceipt> {
-    const token = MizanApi.getAuthToken();
+    const token = await this.resolveAuthToken();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };

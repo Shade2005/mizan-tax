@@ -100,8 +100,9 @@ export class AuthController {
       databaseHost: dbHost,
       hasDirectUrl: !!process.env.DATABASE_URL_UNPOOLED,
       hasJwtSecret: !!process.env.JWT_SECRET,
+      hasGeminiApiKey: !!process.env.GEMINI_API_KEY,
       nodeEnv: process.env.NODE_ENV || 'development',
-      version: '1.0.3',
+      version: '1.0.4',
       timestamp: new Date().toISOString(),
     };
   }
