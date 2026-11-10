@@ -33,6 +33,7 @@ import {
   AnimatedSwitch,
   AnimatedFinancialNumber,
 } from '../../src/animations';
+import { AppPreferences } from '../../src/utils/preferences';
 
 const { width } = Dimensions.get('window');
 const FRAME_WIDTH = width - 48;
@@ -46,6 +47,13 @@ export default function ExpenseScanScreen() {
   const { activeBusiness } = useBusiness();
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<any>(null);
+
+  // Automatically request camera permission upon mount if not granted yet
+  useEffect(() => {
+    if (permission && !permission.granted && permission.canAskAgain) {
+      requestPermission().catch(() => {});
+    }
+  }, [permission]);
 
   const [stage, setStage] = useState<ScanStage>('landing');
   const [torchOn, setTorchOn] = useState(false);
@@ -94,13 +102,17 @@ export default function ExpenseScanScreen() {
     }
 
     if (Platform.OS !== 'web') {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      AppPreferences.impact(Haptics.ImpactFeedbackStyle.Medium);
     }
 
     try {
       let base64 = '';
       if (cameraRef.current) {
-        const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.8 });
+        const photo = await cameraRef.current.takePictureAsync({
+          base64: true,
+          quality: 0.8,
+          shutterSound: AppPreferences.isShutterSoundEnabled(),
+        });
         base64 = photo.base64;
       }
 
@@ -253,7 +265,7 @@ export default function ExpenseScanScreen() {
       }
 
       if (Platform.OS !== 'web') {
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        AppPreferences.notification(Haptics.NotificationFeedbackType.Success);
       }
 
       Alert.alert(

@@ -3,7 +3,7 @@
 // Integrates SafeAreaProvider, LocaleProvider, QueryClientProvider, and System Chrome
 // ============================================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -11,8 +11,14 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LocaleProvider } from '../src/context/LocaleContext';
 import { BusinessProvider } from '../src/context/BusinessContext';
+import { AppPreferences } from '../src/utils/preferences';
 
 export default function RootLayout() {
+  useEffect(() => {
+    // Initialize preferences cache asynchronously on launch
+    AppPreferences.init().catch(() => {});
+  }, []);
+
   const [queryClient] = useState(
     () =>
       new QueryClient({

@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "665284372832",
+    "project_id": "mizan-tax",
+    "storage_bucket": "mizan-tax.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:665284372832:android:0c304831cf10c2176c9605",
+        "android_client_info": {
+          "package_name": "com.mizan.uaetax"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "665284372832-4g5i80lsmu8t7g3ajf3s1h6vv9vs5ggc.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.mizan.uaetax",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "665284372832-ktbs8le1749cpa9edgd7tilbjf76o060.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAJ8aPd3H03RHVdVqt5E8V995K6Ch7lSOs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "665284372832-ktbs8le1749cpa9edgd7tilbjf76o060.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

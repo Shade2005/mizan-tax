@@ -80,18 +80,41 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   /**
    * Loads current authenticated user profile
+   * Priority 1: Instant zero-latency resolution from Firebase Auth currentUser
+   * Priority 2: Stored cached profile from AsyncStorage
+   * Priority 3: Remote backend fetch with graceful offline degradation
    */
   const loadUserProfile = useCallback(async (): Promise<UserProfile | null> => {
     try {
+      // 1. Instant resolution from Firebase Auth session (0 ms latency)
+      if (auth.currentUser) {
+        const u = auth.currentUser;
+        const profile: UserProfile = {
+          id: u.uid,
+          email: u.email || '',
+          fullName: u.displayName || u.email?.split('@')[0] || 'Tax Admin',
+          phone: u.phoneNumber || undefined,
+          role: 'ADMIN',
+          organisationName: u.displayName ? `${u.displayName}'s Entity` : 'UAE Enterprise',
+        };
+        setCurrentUser(profile);
+        setIsAuthenticated(true);
+        AppStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(profile)).catch(() => {});
+        return profile;
+      }
+
+      // 2. Fallback to cached profile if offline
       const storedProfileStr = await AppStorage.getItem(STORAGE_KEY_USER_PROFILE);
       if (storedProfileStr) {
         try {
           const parsed = JSON.parse(storedProfileStr);
           setCurrentUser(parsed);
           setIsAuthenticated(true);
+          return parsed;
         } catch {}
       }
 
+      // 3. Fallback query to backend profile endpoint
       const res = await MizanApi.getProfile();
       if (res?.user) {
         const profile: UserProfile = {

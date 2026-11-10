@@ -1,6 +1,6 @@
 // ============================================================================
 // Mizan (ميزان) - Firebase Client SDK Configuration
-// Provides persistent Authentication for React Native / Expo
+// Provides persistent Authentication and Cloud Firestore for React Native / Expo
 // ============================================================================
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
@@ -17,6 +17,26 @@ import {
   sendPasswordResetEmail,
   updateProfile,
 } from 'firebase/auth';
+import {
+  getFirestore,
+  collection,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+  limit,
+  getDocs,
+  onSnapshot,
+  serverTimestamp,
+  Timestamp,
+  writeBatch,
+  increment,
+  Firestore,
+} from 'firebase/firestore';
 // @ts-ignore - getReactNativePersistence is resolved in react-native runtime from @firebase/auth/dist/rn
 import { getReactNativePersistence } from '@firebase/auth/dist/rn/index.js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -43,9 +63,13 @@ try {
   auth = getAuth(app);
 }
 
+// Initialize Cloud Firestore database instance
+const db: Firestore = getFirestore(app);
+
 export {
   app,
   auth,
+  db,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
@@ -55,4 +79,21 @@ export {
   signInWithCredential,
   sendPasswordResetEmail,
   updateProfile,
+  // Firestore exports
+  collection,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+  limit,
+  getDocs,
+  onSnapshot,
+  serverTimestamp,
+  Timestamp,
+  writeBatch,
+  increment,
 };

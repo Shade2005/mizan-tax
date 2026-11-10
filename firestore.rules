@@ -1,0 +1,494 @@
+rules_version = '2';
+// ============================================================================
+// Mizan (ميزان) - UAE Tax Intelligence Platform: Production Security Rules
+// Cloud Firestore Security Rules v2.0
+//
+// Compliant with UAE Corporate Tax (Federal Decree-Law No. 47/2022) and
+// VAT (Federal Decree-Law No. 8/2017) strict tenant isolation requirements.
+// ============================================================================
+
+// ============================================================================
+// Assumed Data Models & Schema Specifications
+// ============================================================================
+//
+// 1. Collection: /users/{userId}
+//    Document ID: Matches Firebase Auth UID (request.auth.uid)
+//    Fields:
+//      - email: string (required, 3-255 chars, valid email pattern)
+//      - displayName: string (optional, 1-100 chars)
+//      - phoneNumber: string (optional, 5-30 chars)
+//      - role: string (optional, 'user' | 'accountant' | 'admin', default 'user')
+//      - createdAt: timestamp | string (optional)
+//      - updatedAt: timestamp | string (optional)
+//
+// 2. Collection: /businesses/{businessId}
+//    Document ID: Unique business identifier / trade license record ID
+//    Fields:
+//      - ownerId: string (required, immutable, matches creator's request.auth.uid)
+//      - legalName: string (required, 1-200 chars, legal entity name)
+//      - tradeLicenseNumber: string (optional, 1-100 chars)
+//      - jurisdiction: string (optional, 1-50 chars, e.g. MAINLAND, FREE_ZONE)
+//      - licensingAuthority: string (optional, 1-100 chars, e.g. DED, ADED, DMCC)
+//      - turnover: number (optional, >= 0, annual revenue in AED)
+//      - vatTrn: string (optional, 1-30 chars, 15-digit FTA VAT TRN)
+//      - corporateTaxTrn: string (optional, 1-30 chars, 15-digit FTA Corporate Tax TRN)
+//      - sbrPosture: string | bool | map (optional, Small Business Relief posture)
+//      - isQualifyingFreeZonePerson: bool (optional)
+//      - isSmallBusinessReliefEligible: bool (optional)
+//      - accountingMethod: string (optional, 1-50 chars, e.g. ACCRUAL, CASH)
+//      - currency: string (optional, 1-10 chars, default AED)
+//      - createdAt: timestamp | string (optional)
+//      - updatedAt: timestamp | string (optional)
+//
+// 3. Subcollection: /businesses/{businessId}/invoices/{invoiceId}
+//    Parent: Must be owned by request.auth.uid
+//    Fields:
+//      - invoiceNumber: string (required, 1-100 chars)
+//      - businessId: string (optional, must match businessId if provided)
+//      - customerName: string (required, 1-200 chars)
+//      - customerTrn: string (optional, 1-30 chars)
+//      - issueDate: timestamp | string (required)
+//      - dueDate: timestamp | string (optional)
+//      - subtotal: number (required, >= 0)
+//      - taxAmount: number (required, >= 0)
+//      - totalAmount: number (required, >= 0)
+//      - currency: string (optional, 1-10 chars)
+//      - status: string (optional, 'DRAFT' | 'ISSUED' | 'PAID' | 'CANCELLED')
+//      - items: list (optional, max 100 items)
+//      - createdAt: timestamp | string (optional)
+//      - updatedAt: timestamp | string (optional)
+//
+// 4. Subcollection: /businesses/{businessId}/expenses/{expenseId}
+//    Parent: Must be owned by request.auth.uid
+//    Fields:
+//      - merchantName: string (required, 1-200 chars)
+//      - businessId: string (optional, must match businessId if provided)
+//      - invoiceNumber: string (optional, 1-100 chars)
+//      - expenseDate: timestamp | string (required)
+//      - category: string (optional, 1-100 chars)
+//      - amount: number (required, >= 0)
+//      - vatAmount: number (optional, >= 0)
+//      - totalAmount: number (required, >= 0)
+//      - currency: string (optional, 1-10 chars)
+//      - taxTreatment: string (optional, 1-50 chars, e.g. STANDARD_5, ZERO_RATED, EXEMPT, OUT_OF_SCOPE)
+//      - receiptUrl: string (optional, 1-1000 chars)
+//      - createdAt: timestamp | string (optional)
+//      - updatedAt: timestamp | string (optional)
+//
+// 5. Subcollection: /businesses/{businessId}/tax_profiles/{profileId}
+//    Parent: Must be owned by request.auth.uid
+//    Fields:
+//      - businessId: string (optional, must match businessId if provided)
+//      - vatRegistrationStatus: string (optional, 1-50 chars)
+//      - vatFilingFrequency: string (optional, 1-50 chars, MONTHLY | QUARTERLY)
+//      - taxYearEnd: string (optional, 1-20 chars)
+//      - corporateTaxStatus: string (optional, 1-50 chars)
+//      - isDesignatedZone: bool (optional)
+//      - sbrElected: bool (optional)
+//      - createdAt: timestamp | string (optional)
+//      - updatedAt: timestamp | string (optional)
+//
+// 6. Subcollection: /businesses/{businessId}/tax_returns/{returnId}
+//    Parent: Must be owned by request.auth.uid
+//    Fields:
+//      - businessId: string (optional, must match businessId if provided)
+//      - returnType: string (required, 1-50 chars, e.g. VAT201, CORPORATE_TAX)
+//      - taxPeriod: string (required, 1-50 chars)
+//      - filingDeadline: timestamp | string (optional)
+//      - status: string (required, 1-50 chars, e.g. DRAFT, SUBMITTED, FILED, AMENDED)
+//      - totalSales: number (optional, >= 0)
+//      - outputVat: number (optional, >= 0)
+//      - recoverableVat: number (optional, >= 0)
+//      - netTaxDue: number (optional)
+//      - createdAt: timestamp | string (optional)
+//      - updatedAt: timestamp | string (optional)
+//
+// 7. Collection: /audit_logs/{logId}
+//    Document ID: Auto-generated unique log identifier (immutable)
+//    Fields:
+//      - userId: string (required, immutable, must match request.auth.uid)
+//      - businessId: string (optional, 1-100 chars)
+//      - action: string (required, 1-100 chars)
+//      - resourceType: string (required, 1-100 chars)
+//      - resourceId: string (optional, 1-100 chars)
+//      - details: string | map (optional)
+//      - timestamp: timestamp | string (required)
+//      - ipAddress: string (optional, 1-64 chars)
+// ============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ========================================================================
+    // Core Helper Functions
+    // ========================================================================
+
+    // Verifies whether the request caller is authenticated with Firebase Auth
+    function isAuthenticated() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    // Verifies whether the authenticated caller matches the expected user ID
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Verifies whether caller owns the parent business document
+    function isBusinessOwner(businessId) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/businesses/$(businessId)) &&
+        get(/databases/$(database)/documents/businesses/$(businessId)).data.ownerId == request.auth.uid;
+    }
+
+    // Validates that required keys exist in the incoming document payload
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // Validates that only allowed keys are present in the incoming document payload
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Validates that specified immutable keys were not altered during update
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // Validates string type and length constraints
+    function isValidString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    // Validates optional string field (if present, must be string and within length)
+    function isOptionalString(data, field, minLen, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() >= minLen && data[field].size() <= maxLen);
+    }
+
+    // Validates optional number field with optional minimum value check
+    function isOptionalNumber(data, field, minVal) {
+      return !(field in data) || (data[field] is number && data[field] >= minVal);
+    }
+
+    // Validates optional boolean field
+    function isOptionalBool(data, field) {
+      return !(field in data) || (data[field] is bool);
+    }
+
+    // Validates optional date/timestamp field (either CEL timestamp or ISO string)
+    function isOptionalTimestamp(data, field) {
+      return !(field in data) || (data[field] is timestamp) || (data[field] is string && data[field].size() <= 50);
+    }
+
+    // Validates standard email address format (max 255 chars)
+    function isValidEmail(email) {
+      return email is string &&
+        email.size() >= 3 &&
+        email.size() <= 255 &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ========================================================================
+    // Domain Validator Functions (Enforced on both Create & Update)
+    // ========================================================================
+
+    // Validates User Profile Schema & Security Constraints
+    function isValidUser(data, userId) {
+      let allowedKeys = ['email', 'displayName', 'phoneNumber', 'role', 'id', 'userId', 'createdAt', 'updatedAt'];
+      return data.keys().hasOnly(allowedKeys) &&
+        ('email' in data) && isValidEmail(data.email) &&
+        (!('id' in data) || data.id == userId) &&
+        (!('userId' in data) || data.userId == userId) &&
+        isOptionalString(data, 'displayName', 1, 100) &&
+        isOptionalString(data, 'phoneNumber', 5, 30) &&
+        (!('role' in data) || (data.role is string && (data.role == 'user' || data.role == 'accountant'))) &&
+        isOptionalTimestamp(data, 'createdAt') &&
+        isOptionalTimestamp(data, 'updatedAt');
+    }
+
+    // Validates Business Profile Schema & Statutory UAE Constraints
+    function isValidBusiness(data) {
+      let allowedKeys = [
+        'ownerId', 'legalName', 'tradeLicenseNumber', 'jurisdiction',
+        'licensingAuthority', 'turnover', 'vatTrn', 'corporateTaxTrn',
+        'sbrPosture', 'isQualifyingFreeZonePerson', 'isSmallBusinessReliefEligible',
+        'accountingMethod', 'currency', 'createdAt', 'updatedAt'
+      ];
+      return data.keys().hasOnly(allowedKeys) &&
+        ('ownerId' in data) && data.ownerId == request.auth.uid &&
+        ('legalName' in data) && isValidString(data.legalName, 1, 200) &&
+        isOptionalString(data, 'tradeLicenseNumber', 1, 100) &&
+        isOptionalString(data, 'jurisdiction', 1, 50) &&
+        isOptionalString(data, 'licensingAuthority', 1, 100) &&
+        isOptionalNumber(data, 'turnover', 0) &&
+        isOptionalString(data, 'vatTrn', 1, 30) &&
+        isOptionalString(data, 'corporateTaxTrn', 1, 30) &&
+        isOptionalBool(data, 'isQualifyingFreeZonePerson') &&
+        isOptionalBool(data, 'isSmallBusinessReliefEligible') &&
+        isOptionalString(data, 'accountingMethod', 1, 50) &&
+        isOptionalString(data, 'currency', 1, 10) &&
+        (!('sbrPosture' in data) || (data.sbrPosture is string && data.sbrPosture.size() <= 100) || (data.sbrPosture is bool) || (data.sbrPosture is map)) &&
+        isOptionalTimestamp(data, 'createdAt') &&
+        isOptionalTimestamp(data, 'updatedAt');
+    }
+
+    // Validates Invoice & Tax Lines Schema
+    function isValidInvoice(data, businessId) {
+      let allowedKeys = [
+        'invoiceNumber', 'businessId', 'customerName', 'customerTrn',
+        'issueDate', 'dueDate', 'subtotal', 'taxAmount', 'totalAmount',
+        'currency', 'status', 'items', 'createdAt', 'updatedAt'
+      ];
+      return data.keys().hasOnly(allowedKeys) &&
+        ('invoiceNumber' in data) && isValidString(data.invoiceNumber, 1, 100) &&
+        ('customerName' in data) && isValidString(data.customerName, 1, 200) &&
+        ('issueDate' in data) && ((data.issueDate is timestamp) || (data.issueDate is string && data.issueDate.size() <= 50)) &&
+        ('subtotal' in data) && data.subtotal is number && data.subtotal >= 0 &&
+        ('taxAmount' in data) && data.taxAmount is number && data.taxAmount >= 0 &&
+        ('totalAmount' in data) && data.totalAmount is number && data.totalAmount >= 0 &&
+        (!('businessId' in data) || data.businessId == businessId) &&
+        isOptionalString(data, 'customerTrn', 1, 30) &&
+        isOptionalTimestamp(data, 'dueDate') &&
+        isOptionalString(data, 'currency', 1, 10) &&
+        (!('status' in data) || (data.status is string && data.status in ['DRAFT', 'ISSUED', 'PAID', 'CANCELLED', 'OVERDUE'])) &&
+        (!('items' in data) || (data.items is list && data.items.size() <= 100)) &&
+        isOptionalTimestamp(data, 'createdAt') &&
+        isOptionalTimestamp(data, 'updatedAt');
+    }
+
+    // Validates Business Expense & VAT Receipt Schema
+    function isValidExpense(data, businessId) {
+      let allowedKeys = [
+        'merchantName', 'businessId', 'invoiceNumber', 'expenseDate',
+        'category', 'amount', 'vatAmount', 'totalAmount', 'currency',
+        'taxTreatment', 'receiptUrl', 'createdAt', 'updatedAt'
+      ];
+      return data.keys().hasOnly(allowedKeys) &&
+        ('merchantName' in data) && isValidString(data.merchantName, 1, 200) &&
+        ('expenseDate' in data) && ((data.expenseDate is timestamp) || (data.expenseDate is string && data.expenseDate.size() <= 50)) &&
+        ('amount' in data) && data.amount is number && data.amount >= 0 &&
+        ('totalAmount' in data) && data.totalAmount is number && data.totalAmount >= 0 &&
+        (!('businessId' in data) || data.businessId == businessId) &&
+        isOptionalString(data, 'invoiceNumber', 1, 100) &&
+        isOptionalString(data, 'category', 1, 100) &&
+        isOptionalNumber(data, 'vatAmount', 0) &&
+        isOptionalString(data, 'currency', 1, 10) &&
+        isOptionalString(data, 'taxTreatment', 1, 50) &&
+        isOptionalString(data, 'receiptUrl', 1, 1000) &&
+        isOptionalTimestamp(data, 'createdAt') &&
+        isOptionalTimestamp(data, 'updatedAt');
+    }
+
+    // Validates Corporate Tax & VAT Statutory Settings Schema
+    function isValidTaxProfile(data, businessId) {
+      let allowedKeys = [
+        'businessId', 'vatRegistrationStatus', 'vatFilingFrequency',
+        'taxYearEnd', 'corporateTaxStatus', 'isDesignatedZone',
+        'sbrElected', 'createdAt', 'updatedAt'
+      ];
+      return data.keys().hasOnly(allowedKeys) &&
+        (!('businessId' in data) || data.businessId == businessId) &&
+        isOptionalString(data, 'vatRegistrationStatus', 1, 50) &&
+        isOptionalString(data, 'vatFilingFrequency', 1, 50) &&
+        isOptionalString(data, 'taxYearEnd', 1, 20) &&
+        isOptionalString(data, 'corporateTaxStatus', 1, 50) &&
+        isOptionalBool(data, 'isDesignatedZone') &&
+        isOptionalBool(data, 'sbrElected') &&
+        isOptionalTimestamp(data, 'createdAt') &&
+        isOptionalTimestamp(data, 'updatedAt');
+    }
+
+    // Validates Corporate Tax & VAT 201 Return Schema
+    function isValidTaxReturn(data, businessId) {
+      let allowedKeys = [
+        'businessId', 'returnType', 'taxPeriod', 'filingDeadline',
+        'status', 'totalSales', 'outputVat', 'recoverableVat',
+        'netTaxDue', 'createdAt', 'updatedAt'
+      ];
+      return data.keys().hasOnly(allowedKeys) &&
+        ('returnType' in data) && isValidString(data.returnType, 1, 50) &&
+        ('taxPeriod' in data) && isValidString(data.taxPeriod, 1, 50) &&
+        ('status' in data) && isValidString(data.status, 1, 50) &&
+        (!('businessId' in data) || data.businessId == businessId) &&
+        isOptionalTimestamp(data, 'filingDeadline') &&
+        isOptionalNumber(data, 'totalSales', 0) &&
+        isOptionalNumber(data, 'outputVat', 0) &&
+        isOptionalNumber(data, 'recoverableVat', 0) &&
+        (!('netTaxDue' in data) || data.netTaxDue is number) &&
+        isOptionalTimestamp(data, 'createdAt') &&
+        isOptionalTimestamp(data, 'updatedAt');
+    }
+
+    // Validates Immutable Audit Log Schema
+    function isValidAuditLog(data) {
+      let allowedKeys = [
+        'userId', 'businessId', 'action', 'resourceType',
+        'resourceId', 'details', 'timestamp', 'ipAddress'
+      ];
+      return data.keys().hasOnly(allowedKeys) &&
+        ('userId' in data) && data.userId == request.auth.uid &&
+        ('action' in data) && isValidString(data.action, 1, 100) &&
+        ('resourceType' in data) && isValidString(data.resourceType, 1, 100) &&
+        ('timestamp' in data) && ((data.timestamp is timestamp) || (data.timestamp is string && data.timestamp.size() <= 50)) &&
+        isOptionalString(data, 'businessId', 1, 100) &&
+        isOptionalString(data, 'resourceId', 1, 100) &&
+        isOptionalString(data, 'ipAddress', 1, 64) &&
+        (!('details' in data) || (data.details is string && data.details.size() <= 2000) || (data.details is map));
+    }
+
+
+    // ========================================================================
+    // Collection Rules
+    // ========================================================================
+
+    // ------------------------------------------------------------------------
+    // 1. User Profiles (/users/{userId})
+    // ------------------------------------------------------------------------
+    // Isolated user profiles containing PII (email, phone).
+    // Access strictly restricted to document owner. Blanket listing is forbidden.
+    match /users/{userId} {
+      // Direct document lookup allowed only for the authenticated owner
+      allow get: if isOwner(userId);
+
+      // User enumeration forbidden across tenant boundaries
+      allow list: if false;
+
+      // User can create their own document provided schema and ID match
+      allow create: if isOwner(userId) &&
+        isValidUser(request.resource.data, userId);
+
+      // User can update their profile; role and ID must remain immutable
+      allow update: if isOwner(userId) &&
+        isValidUser(request.resource.data, userId) &&
+        areImmutableFieldsUnchanged(['id', 'userId', 'role', 'createdAt']);
+
+      // User can delete their own account profile
+      allow delete: if isOwner(userId);
+    }
+
+    // ------------------------------------------------------------------------
+    // 2. UAE Corporate Business Profiles (/businesses/{businessId})
+    // ------------------------------------------------------------------------
+    // Trade license records, legal names, jurisdiction, and turnover figures.
+    // Full ownership gating: read/update/delete only by ownerId matching auth UID.
+    match /businesses/{businessId} {
+      // Owner can get their specific business profile
+      allow get: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+
+      // Owner can query/list their own businesses: where('ownerId', '==', request.auth.uid)
+      allow list: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+
+      // Authenticated user can create a business profile where they are the owner
+      allow create: if isAuthenticated() &&
+        request.resource.data.ownerId == request.auth.uid &&
+        isValidBusiness(request.resource.data);
+
+      // Owner can update statutory business info; ownerId and createdAt are immutable
+      allow update: if isAuthenticated() &&
+        resource.data.ownerId == request.auth.uid &&
+        request.resource.data.ownerId == resource.data.ownerId &&
+        isValidBusiness(request.resource.data) &&
+        areImmutableFieldsUnchanged(['ownerId', 'createdAt']);
+
+      // Owner can delete their business profile
+      allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+
+      // ----------------------------------------------------------------------
+      // 3. Subcollection: Invoices (/businesses/{businessId}/invoices/{invoiceId})
+      // ----------------------------------------------------------------------
+      // Invoices and tax lines. Access restricted to parent business owner.
+      match /invoices/{invoiceId} {
+        allow get, list: if isBusinessOwner(businessId);
+
+        allow create: if isBusinessOwner(businessId) &&
+          isValidInvoice(request.resource.data, businessId);
+
+        allow update: if isBusinessOwner(businessId) &&
+          isValidInvoice(request.resource.data, businessId) &&
+          areImmutableFieldsUnchanged(['invoiceNumber', 'businessId', 'createdAt']);
+
+        allow delete: if isBusinessOwner(businessId);
+      }
+
+      // ----------------------------------------------------------------------
+      // 4. Subcollection: Expenses (/businesses/{businessId}/expenses/{expenseId})
+      // ----------------------------------------------------------------------
+      // Business expenses and VAT receipt records. Access restricted to owner.
+      match /expenses/{expenseId} {
+        allow get, list: if isBusinessOwner(businessId);
+
+        allow create: if isBusinessOwner(businessId) &&
+          isValidExpense(request.resource.data, businessId);
+
+        allow update: if isBusinessOwner(businessId) &&
+          isValidExpense(request.resource.data, businessId) &&
+          areImmutableFieldsUnchanged(['businessId', 'createdAt']);
+
+        allow delete: if isBusinessOwner(businessId);
+      }
+
+      // ----------------------------------------------------------------------
+      // 5. Subcollection: Tax Profiles (/businesses/{businessId}/tax_profiles/{profileId})
+      // ----------------------------------------------------------------------
+      // Corporate tax and VAT statutory posture settings.
+      match /tax_profiles/{profileId} {
+        allow get, list: if isBusinessOwner(businessId);
+
+        allow create: if isBusinessOwner(businessId) &&
+          isValidTaxProfile(request.resource.data, businessId);
+
+        allow update: if isBusinessOwner(businessId) &&
+          isValidTaxProfile(request.resource.data, businessId) &&
+          areImmutableFieldsUnchanged(['businessId', 'createdAt']);
+
+        allow delete: if isBusinessOwner(businessId);
+      }
+
+      // ----------------------------------------------------------------------
+      // 6. Subcollection: Tax Returns (/businesses/{businessId}/tax_returns/{returnId})
+      // ----------------------------------------------------------------------
+      // Corporate Tax and VAT 201 statutory filings.
+      match /tax_returns/{returnId} {
+        allow get, list: if isBusinessOwner(businessId);
+
+        allow create: if isBusinessOwner(businessId) &&
+          isValidTaxReturn(request.resource.data, businessId);
+
+        allow update: if isBusinessOwner(businessId) &&
+          isValidTaxReturn(request.resource.data, businessId) &&
+          areImmutableFieldsUnchanged(['businessId', 'returnType', 'taxPeriod', 'createdAt']);
+
+        allow delete: if isBusinessOwner(businessId);
+      }
+    }
+
+    // ------------------------------------------------------------------------
+    // 7. Audit Logs (/audit_logs/{logId})
+    // ------------------------------------------------------------------------
+    // Immutable audit trail. Write-once (create-only). No updates or deletions.
+    match /audit_logs/{logId} {
+      // Authenticated users can retrieve their own audit trail records
+      allow get: if isAuthenticated() && resource.data.userId == request.auth.uid;
+
+      // Authenticated users can query their own audit logs: where('userId', '==', request.auth.uid)
+      allow list: if isAuthenticated() && resource.data.userId == request.auth.uid;
+
+      // Creation allowed if caller is authenticated, userId matches auth UID, and schema validates
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid &&
+        isValidAuditLog(request.resource.data);
+
+      // Explicitly prohibited: Audit records are strictly immutable
+      allow update, delete: if false;
+    }
+
+    // ------------------------------------------------------------------------
+    // 8. Default Deny Fallback
+    // ------------------------------------------------------------------------
+    // Absolute defense-in-depth: Deny all read and write operations on any
+    // document or collection path not explicitly granted above.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

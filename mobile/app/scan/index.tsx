@@ -4,7 +4,7 @@
 // Supports Camera capture, Gallery picker, and Direct Manual Entry
 // ============================================================================
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -26,6 +26,7 @@ import { useLocale } from '../../src/context/LocaleContext';
 import { ScannerLaserBeam } from '../../src/components/ScannerLaserBeam';
 import { OcrProcessingOverlay } from '../../src/animations';
 import { VisionOcr, ExtractedTradeLicense } from '../../src/services/visionOcr';
+import { AppPreferences } from '../../src/utils/preferences';
 
 const { width } = Dimensions.get('window');
 const FRAME_WIDTH = width - 48;
@@ -36,6 +37,13 @@ export default function ScanTradeLicenseScreen() {
   const { isRTL } = useLocale();
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<any>(null);
+
+  // Automatically request camera permission upon screen mount if not granted yet
+  useEffect(() => {
+    if (permission && !permission.granted && permission.canAskAgain) {
+      requestPermission().catch(() => {});
+    }
+  }, [permission]);
 
   const [torchOn, setTorchOn] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<'0.5' | '1x' | '2'>('1x');
@@ -109,7 +117,7 @@ export default function ScanTradeLicenseScreen() {
     if (isMultiPage) {
       const nextPages = [...capturedPages, { base64: base64Data, mime: mimeType }];
       setCapturedPages(nextPages);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      AppPreferences.notification(Haptics.NotificationFeedbackType.Success);
       return;
     }
     await processImageBase64(base64Data, mimeType);
@@ -123,7 +131,7 @@ export default function ScanTradeLicenseScreen() {
 
   const handleCapture = async () => {
     if (Platform.OS !== 'web') {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      AppPreferences.impact(Haptics.ImpactFeedbackStyle.Medium);
     }
 
     if (cameraRef.current && permission?.granted) {
@@ -131,6 +139,7 @@ export default function ScanTradeLicenseScreen() {
         const photo = await cameraRef.current.takePictureAsync({
           quality: 0.8,
           base64: true,
+          shutterSound: AppPreferences.isShutterSoundEnabled(),
         });
         if (photo?.base64) {
           await handleImageAcquired(photo.base64, 'image/jpeg');
@@ -274,7 +283,7 @@ export default function ScanTradeLicenseScreen() {
               key={lvl}
               style={[styles.zoomPill, zoomLevel === lvl && styles.zoomPillActive]}
               onPress={() => {
-                Haptics.selectionAsync().catch(() => {});
+                AppPreferences.selection();
                 setZoomLevel(lvl);
               }}
             >

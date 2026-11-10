@@ -26,6 +26,7 @@ import { useBusiness } from '../../src/context/BusinessContext';
 import { AnimatedSwitch } from '../../src/animations';
 import { MizanApi } from '../../src/services/api';
 import { AppStorage } from '../../src/utils/storage';
+import { AppPreferences } from '../../src/utils/preferences';
 
 type BizSettingsTab = 'Business' | 'Tax & Compliance' | 'Integrations' | 'Team';
 type ActiveModalType =
@@ -34,7 +35,8 @@ type ActiveModalType =
   | 'notifications'
   | 'security'
   | 'edit-biz-field'
-  | 'invite-team';
+  | 'invite-team'
+  | 'app-preferences';
 
 interface TeamMember {
   id: string;
@@ -91,6 +93,10 @@ export default function ProfileScreen() {
   const [biometricLock, setBiometricLock] = useState(false);
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(true);
 
+  // App & Device Preferences (Defaults to false per requirements)
+  const [hapticsEnabled, setHapticsEnabled] = useState(AppPreferences.isHapticsEnabled());
+  const [shutterSoundEnabled, setShutterSoundEnabled] = useState(AppPreferences.isShutterSoundEnabled());
+
   // Edit Business Field Modal state
   const [editFieldKey, setEditFieldKey] = useState<string>('');
   const [editFieldLabel, setEditFieldLabel] = useState<string>('');
@@ -106,6 +112,10 @@ export default function ProfileScreen() {
   // Load persisted preferences from AppStorage
   const loadPersistedSettings = useCallback(async () => {
     try {
+      // Sync app preferences cache
+      setHapticsEnabled(AppPreferences.isHapticsEnabled());
+      setShutterSoundEnabled(AppPreferences.isShutterSoundEnabled());
+
       const notifRaw = await AppStorage.getItem(STORAGE_KEY_NOTIF_PREFS);
       if (notifRaw) {
         const parsed = JSON.parse(notifRaw);
@@ -147,8 +157,15 @@ export default function ProfileScreen() {
     loadPersistedSettings();
   }, [loadPersistedSettings]);
 
+  const updateAppPref = async (key: 'hapticsEnabled' | 'shutterSoundEnabled', val: boolean) => {
+    if (key === 'hapticsEnabled') setHapticsEnabled(val);
+    if (key === 'shutterSoundEnabled') setShutterSoundEnabled(val);
+    await AppPreferences.update({ [key]: val });
+    AppPreferences.selection();
+  };
+
   const updateBizPref = async (key: 'isPrimary' | 'isMultiCurrency' | 'isAutoCalc', val: boolean) => {
-    Haptics.selectionAsync().catch(() => {});
+    AppPreferences.selection();
     const next = {
       isPrimary: key === 'isPrimary' ? val : isPrimary,
       isMultiCurrency: key === 'isMultiCurrency' ? val : isMultiCurrency,
@@ -167,7 +184,7 @@ export default function ProfileScreen() {
     key: 'vatDeadlineAlerts' | 'ctFilingReminders' | 'ocrReviewAlerts' | 'ftaPenaltyWarnings',
     val: boolean
   ) => {
-    Haptics.selectionAsync().catch(() => {});
+    AppPreferences.selection();
     const next = {
       vatDeadlineAlerts: key === 'vatDeadlineAlerts' ? val : vatDeadlineAlerts,
       ctFilingReminders: key === 'ctFilingReminders' ? val : ctFilingReminders,
@@ -183,7 +200,7 @@ export default function ProfileScreen() {
   };
 
   const updateSecurityPref = async (key: 'biometricLock' | 'twoFactorEnabled', val: boolean) => {
-    Haptics.selectionAsync().catch(() => {});
+    AppPreferences.selection();
     const next = {
       biometricLock: key === 'biometricLock' ? val : biometricLock,
       twoFactorEnabled: key === 'twoFactorEnabled' ? val : twoFactorEnabled,
@@ -199,7 +216,7 @@ export default function ProfileScreen() {
       Alert.alert('No Active Business', 'Please scan or select a business entity first.');
       return;
     }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    AppPreferences.impact(Haptics.ImpactFeedbackStyle.Light);
     setEditFieldKey(key);
     setEditFieldLabel(label);
     setEditFieldValue(currentVal);
@@ -226,7 +243,7 @@ export default function ProfileScreen() {
 
       await MizanApi.updateBusiness(activeBusiness.id, payload);
       await refreshBusinesses();
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      AppPreferences.notification(Haptics.NotificationFeedbackType.Success);
       setActiveModal(null);
     } catch (err: any) {
       Alert.alert('Update Failed', err?.message || 'Could not update business record.');
@@ -255,7 +272,7 @@ export default function ProfileScreen() {
     setInviteName('');
     setInviteEmail('');
     setActiveModal(null);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    AppPreferences.notification(Haptics.NotificationFeedbackType.Success);
     Alert.alert('Invitation Sent', `${newMember.name} (${newMember.role}) has been invited to ${activeBusiness?.legalName || 'your organisation'}.`);
   };
 
@@ -265,7 +282,7 @@ export default function ProfileScreen() {
     if (activeBusiness?.id) {
       await AppStorage.setItem(`mizan_team_${activeBusiness.id}`, JSON.stringify(updated));
     }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    AppPreferences.impact(Haptics.ImpactFeedbackStyle.Light);
   };
 
   return (
@@ -420,7 +437,7 @@ export default function ProfileScreen() {
                     activeOpacity={0.8}
                     onPress={() => {
                       if (isActive) {
-                        Haptics.selectionAsync().catch(() => {});
+                        AppPreferences.selection();
                         setViewState('business-settings');
                       } else {
                         setActiveBusinessId(biz.id);
@@ -566,6 +583,27 @@ export default function ProfileScreen() {
               <TouchableOpacity
                 style={styles.settingsRow}
                 activeOpacity={0.7}
+                onPress={() => setActiveModal('app-preferences')}
+              >
+                <View style={styles.settingIconSquare}>
+                  <Ionicons name="options-outline" size={18} color={colors.neutral.textPrimary} />
+                </View>
+                <View style={styles.settingTextCol}>
+                  <Text style={styles.settingTitle}>
+                    {isRTL ? 'الصوت والاهتزاز' : 'Haptics & Shutter Sound'}
+                  </Text>
+                  <Text style={styles.settingDesc}>
+                    {isRTL ? 'التحكم في الاهتزاز التفاعلي وصوت التقاط الكاميرا' : 'Control vibration feedback and camera shutter sound'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.neutral.textTertiary} />
+              </TouchableOpacity>
+
+              <View style={styles.itemDivider} />
+
+              <TouchableOpacity
+                style={styles.settingsRow}
+                activeOpacity={0.7}
                 onPress={() => router.push('/learn/chat')}
               >
                 <View style={styles.settingIconSquare}>
@@ -672,7 +710,7 @@ export default function ProfileScreen() {
                     key={tab}
                     style={[styles.bizPill, isSelected && styles.bizPillActive]}
                     onPress={() => {
-                      Haptics.selectionAsync().catch(() => {});
+                      AppPreferences.selection();
                       setBizTab(tab);
                     }}
                     activeOpacity={0.8}
@@ -1295,6 +1333,70 @@ export default function ProfileScreen() {
               onPress={() => setActiveModal(null)}
             >
               <Text style={styles.actionFullBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==================================================================== */}
+      {/* MODAL: APP & DEVICE PREFERENCES (HAPTICS & SHUTTER SOUND)            */}
+      {/* ==================================================================== */}
+      <Modal visible={activeModal === 'app-preferences'} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>
+                {isRTL ? 'إعدادات الصوت والاهتزاز' : 'Device & Feedback Preferences'}
+              </Text>
+              <TouchableOpacity onPress={() => setActiveModal(null)}>
+                <Ionicons name="close" size={22} color={colors.neutral.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.toggleRow}>
+              <View style={styles.toggleTextCol}>
+                <Text style={styles.toggleTitle}>
+                  {isRTL ? 'الاهتزاز التفاعلي (Haptics)' : 'Haptic Vibration Feedback'}
+                </Text>
+                <Text style={styles.toggleDesc}>
+                  {isRTL ? 'الاهتزاز عند النقر على الأزرار والتنبيهات (مغلق افتراضياً)' : 'Vibrate on buttons, tabs, and system alerts (Default: OFF)'}
+                </Text>
+              </View>
+              <AnimatedSwitch
+                value={hapticsEnabled}
+                onValueChange={(v) => updateAppPref('hapticsEnabled', v)}
+                accessibilityLabel="Haptic Vibration Feedback"
+              />
+            </View>
+            <View style={styles.itemDivider} />
+
+            <View style={styles.toggleRow}>
+              <View style={styles.toggleTextCol}>
+                <Text style={styles.toggleTitle}>
+                  {isRTL ? 'صوت التقاط الكاميرا (Shutter Sound)' : 'Camera Shutter Sound'}
+                </Text>
+                <Text style={styles.toggleDesc}>
+                  {isRTL ? 'إصدار صوت عند التقاط صورة الفواتير أو الرخص (مغلق افتراضياً)' : 'Play sound when capturing receipts & trade licenses (Default: OFF)'}
+                </Text>
+              </View>
+              <AnimatedSwitch
+                value={shutterSoundEnabled}
+                onValueChange={(v) => updateAppPref('shutterSoundEnabled', v)}
+                accessibilityLabel="Camera Shutter Sound"
+              />
+            </View>
+            <View style={styles.itemDivider} />
+
+            <View style={styles.modalInfoRow}>
+              <Text style={styles.modalInfoLabel}>Default Policy</Text>
+              <Text style={styles.modalInfoValue}>Silent Operation (Both OFF by default)</Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.actionFullBtn, { marginTop: 16 }]}
+              onPress={() => setActiveModal(null)}
+            >
+              <Text style={styles.actionFullBtnText}>Done</Text>
             </TouchableOpacity>
           </View>
         </View>

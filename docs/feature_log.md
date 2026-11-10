@@ -4,9 +4,13 @@
 graph TD
     subgraph Identity & Tenant Layer
         AUTH[FEAT-AUTH-01: Production Auth]
+        GOOGLE[FEAT-AUTH-04: 1-Tap Google Sign-In]
         GUARD[FEAT-AUTH-03: Route Gatekeeper]
         ONBOARD[FEAT-AUTH-02: Mandatory Business Onboarding]
+        ONBOARD_TRI[FEAT-ONBD-02: 3-Way Entry - Scan, Upload, Manual]
+        FIRESTORE[FEAT-DATA-01: Cloud Firestore Multi-Tenant Store]
         BIZ_CTX[Business Multi-Entity Context]
+        PREFS[FEAT-PREF-01: App Preferences & Silent Defaults]
     end
 
     subgraph Tax & Regulatory Core
@@ -18,14 +22,23 @@ graph TD
     subgraph Operational Tools
         OCR_LIC[FEAT-OCR-01: Trade License OCR]
         OCR_EXP[FEAT-OCR-02: Expense Scanner]
+        PERM[FEAT-PERM-01: Auto Camera Permission Prompt]
         INVOICE[FEAT-INV-01: Compliant Invoicing]
         DASH[FEAT-DASH-01: EmaraTax Dashboard]
         AI_ASST[FEAT-AI-01: Grounded AI Assistant]
     end
 
     AUTH --> GUARD
+    GOOGLE --> GUARD
     GUARD --> ONBOARD
-    ONBOARD --> BIZ_CTX
+    ONBOARD --> ONBOARD_TRI
+    ONBOARD_TRI --> OCR_LIC
+    ONBOARD_TRI --> FIRESTORE
+    PERM --> OCR_LIC
+    PERM --> OCR_EXP
+    PREFS --> OCR_EXP
+    PREFS --> OCR_LIC
+    FIRESTORE --> BIZ_CTX
     BIZ_CTX --> DASH
     BIZ_CTX --> TAX_ENG
     BIZ_CTX --> SBR_ENG

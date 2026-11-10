@@ -3,7 +3,7 @@
 // Clean FinTech styling with UAE bilingual localization and secure authentication
 // ============================================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -24,6 +24,13 @@ import { colors, radii, shadows, spacing } from '../../src/theme/tokens';
 import { useLocale } from '../../src/context/LocaleContext';
 import { useBusiness } from '../../src/context/BusinessContext';
 import { MizanApi } from '../../src/services/api';
+import {
+  auth,
+  GoogleAuthProvider,
+  signInWithCredential,
+} from '../../src/services/firebase';
+import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+import { AppPreferences } from '../../src/utils/preferences';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -34,7 +41,20 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Configure Google Sign-in on mount with client configuration
+  useEffect(() => {
+    try {
+      GoogleSignin.configure({
+        webClientId: '665284372832-ktbs8le1749cpa9edgd7tilbjf76o060.apps.googleusercontent.com',
+        offlineAccess: true,
+      });
+    } catch (e: any) {
+      console.warn('Google Sign-in configuration warning:', e.message);
+    }
+  }, []);
 
   const getFirebaseAuthErrorMessage = (code: string, isRTL: boolean): string => {
     switch (code) {
@@ -89,7 +109,7 @@ export default function LoginScreen() {
   const handleLogin = async () => {
     if (!email.trim() || !password) {
       setErrorMessage(isRTL ? 'يرجى إدخال البريد الإلكتروني وكلمة المرور' : 'Please enter your email and password');
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      AppPreferences.notification(Haptics.NotificationFeedbackType.Error);
       return;
     }
 
@@ -102,7 +122,7 @@ export default function LoginScreen() {
         password,
       });
 
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      AppPreferences.notification(Haptics.NotificationFeedbackType.Success);
       await refreshBusinesses();
       const existing = await MizanApi.getBusinesses().catch(() => []);
       if (existing && existing.length > 0) {
@@ -111,13 +131,60 @@ export default function LoginScreen() {
         router.replace('/onboarding/business');
       }
     } catch (err: any) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      AppPreferences.notification(Haptics.NotificationFeedbackType.Error);
       const friendlyMsg = getFirebaseAuthErrorMessage(err?.code || '', isRTL);
       setErrorMessage(
         friendlyMsg || err?.message || (isRTL ? 'فشل تسجيل الدخول. يرجى التحقق من بياناتك.' : 'Login failed. Please check your credentials.')
       );
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  /**
+   * Initiates 1-Tap native Google Sign-in flow and links with Firebase Authentication
+   */
+  const handleGoogleSignIn = async () => {
+    try {
+      setIsGoogleLoading(true);
+      setErrorMessage(null);
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      const response = await GoogleSignin.signIn();
+      const idToken = (response as any)?.data?.idToken || (response as any)?.idToken;
+      if (!idToken) {
+        throw new Error('Could not retrieve Google ID token.');
+      }
+      const credential = GoogleAuthProvider.credential(idToken);
+      await signInWithCredential(auth, credential);
+
+      AppPreferences.notification(Haptics.NotificationFeedbackType.Success);
+      await refreshBusinesses();
+      const existing = await MizanApi.getBusinesses().catch(() => []);
+      if (existing && existing.length > 0) {
+        router.replace('/(tabs)');
+      } else {
+        router.replace('/onboarding/business');
+      }
+    } catch (error: any) {
+      if (error?.code === statusCodes?.SIGN_IN_CANCELLED) {
+        return;
+      } else if (error?.code === statusCodes?.IN_PROGRESS) {
+        return;
+      } else if (error?.code === statusCodes?.PLAY_SERVICES_NOT_AVAILABLE) {
+        setErrorMessage(
+          isRTL
+            ? 'خدمات Google Play غير متوفرة أو قديمة على هذا الجهاز.'
+            : 'Google Play Services not available or outdated on this device.'
+        );
+      } else {
+        setErrorMessage(
+          error?.message ||
+            (isRTL ? 'فشل تسجيل الدخول باستخدام Google' : 'Google sign-in failed. Please try again.')
+        );
+      }
+      AppPreferences.notification(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setIsGoogleLoading(false);
     }
   };
 
@@ -257,7 +324,7 @@ export default function LoginScreen() {
             <TouchableOpacity
               style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
               onPress={handleLogin}
-              disabled={isLoading}
+              disabled={isLoading || isGoogleLoading}
               activeOpacity={0.85}
             >
               {isLoading ? (
@@ -266,6 +333,32 @@ export default function LoginScreen() {
                 <Text style={styles.primaryButtonText}>
                   {isRTL ? 'تسجيل الدخول' : 'Sign in'}
                 </Text>
+              )}
+            </TouchableOpacity>
+
+            {/* Social Login Divider */}
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>{isRTL ? 'أو' : 'OR'}</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            {/* 1-Tap Google Sign-In Button */}
+            <TouchableOpacity
+              style={[styles.googleButton, isGoogleLoading && styles.buttonDisabled]}
+              onPress={handleGoogleSignIn}
+              disabled={isLoading || isGoogleLoading}
+              activeOpacity={0.85}
+            >
+              {isGoogleLoading ? (
+                <ActivityIndicator color={colors.neutral.textPrimary} size="small" />
+              ) : (
+                <View style={[styles.googleButtonContent, { flexDirection: isRTL ? 'row-reverse' : 'row' }]}>
+                  <Ionicons name="logo-google" size={18} color="#EA4335" style={{ marginHorizontal: 8 }} />
+                  <Text style={styles.googleButtonText}>
+                    {isRTL ? 'المتابعة باستخدام Google' : 'Continue with Google'}
+                  </Text>
+                </View>
               )}
             </TouchableOpacity>
           </View>
@@ -454,6 +547,41 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: spacing.md,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.neutral.border,
+  },
+  dividerText: {
+    paddingHorizontal: spacing.sm,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.neutral.textTertiary,
+  },
+  googleButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: colors.neutral.border,
+    borderRadius: radii.md,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.sm,
+  },
+  googleButtonContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  googleButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.neutral.textPrimary,
   },
   footerRow: {
     alignItems: 'center',

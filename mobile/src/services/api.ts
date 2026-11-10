@@ -22,11 +22,8 @@ const getBaseUrl = (): string => {
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL;
   }
-  // Android Emulator uses 10.0.2.2 to access host localhost
-  if (Platform.OS === 'android') {
-    return 'http://10.0.2.2:4000';
-  }
-  return 'http://localhost:4000';
+  // Production cloud API on Render (accessible by real Android devices and emulators)
+  return 'https://mizan-api-jpen.onrender.com';
 };
 
 export const API_BASE_URL = getBaseUrl();
@@ -275,15 +272,42 @@ export class MizanApi {
   }
 
   public static async getProfile(): Promise<any> {
-    await this.ensureAuthenticated();
-    const res = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
-      method: 'GET',
-      headers: this.getHeaders(),
-    });
-    if (!res.ok) {
-      throw new Error('Failed to retrieve user profile');
+    // Instant resolution if authenticated via Firebase
+    if (auth.currentUser) {
+      const u = auth.currentUser;
+      return {
+        user: {
+          id: u.uid,
+          email: u.email || '',
+          fullName: u.displayName || u.email?.split('@')[0] || 'User',
+          phone: u.phoneNumber || undefined,
+        },
+        activeOrganisation: {
+          id: `org_${u.uid}`,
+          name: u.displayName ? `${u.displayName}'s Entity` : 'UAE Enterprise',
+          role: 'ADMIN',
+        },
+      };
     }
-    return res.json();
+
+    await this.ensureAuthenticated();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
+        method: 'GET',
+        headers: this.getHeaders(),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) {
+        throw new Error('Failed to retrieve user profile');
+      }
+      return res.json();
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      throw err;
+    }
   }
 
   public static async loadStoredSession(): Promise<boolean> {
@@ -361,9 +385,21 @@ export class MizanApi {
   }
 
   /**
-   * Persists scanned and verified Trade License to the backend
+   * Persists scanned and verified Trade License directly to Cloud Firestore
+   * with seamless fallback to backend API if needed
    */
   public static async saveTradeLicense(payload: SaveTradeLicensePayload): Promise<any> {
+    // If Firebase Auth session is active, write directly to Cloud Firestore
+    if (auth.currentUser) {
+      try {
+        const { FirestoreService } = require('./firestore.service');
+        const saved = await FirestoreService.saveBusiness(payload);
+        return saved;
+      } catch (err: any) {
+        console.warn('Firestore direct write failed, attempting backend fallback:', err.message);
+      }
+    }
+
     await this.ensureAuthenticated();
     const res = await fetch(`${API_BASE_URL}/api/v1/businesses`, {
       method: 'POST',
@@ -380,19 +416,36 @@ export class MizanApi {
   }
 
   /**
-   * Lists all registered business entities for the authenticated organisation
+   * Lists all registered business entities for the authenticated user from Cloud Firestore
    */
   public static async getBusinesses(): Promise<any[]> {
-    await this.ensureAuthenticated();
-    const res = await fetch(`${API_BASE_URL}/api/v1/businesses`, {
-      method: 'GET',
-      headers: this.getHeaders(),
-    });
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      throw new Error(errorData.message || `Failed to fetch businesses (HTTP ${res.status})`);
+    // If Firebase Auth session is active, read directly from Cloud Firestore
+    if (auth.currentUser) {
+      try {
+        const { FirestoreService } = require('./firestore.service');
+        const list = await FirestoreService.getBusinesses();
+        // Return list directly (even if empty [] for a brand new account).
+        // Never fall through to sleeping external servers when authenticated with Firebase!
+        return list || [];
+      } catch (err: any) {
+        console.warn('Firestore read failed:', err?.message || err);
+        return [];
+      }
     }
-    return res.json();
+
+    try {
+      await this.ensureAuthenticated();
+      const res = await fetch(`${API_BASE_URL}/api/v1/businesses`, {
+        method: 'GET',
+        headers: this.getHeaders(),
+      });
+      if (!res.ok) {
+        return [];
+      }
+      return res.json();
+    } catch {
+      return [];
+    }
   }
 
   /**
