@@ -17,13 +17,14 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  PermissionsAndroid,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import { File } from 'expo-file-system';
 import { SafeAreaView } from '../../src/components/SafeAreaView';
 import { colors, radii, shadows, spacing } from '../../src/theme/tokens';
 import { useLocale } from '../../src/context/LocaleContext';
@@ -310,16 +311,39 @@ export default function BusinessOnboardingScreen() {
     try {
       AppPreferences.impact(Haptics.ImpactFeedbackStyle.Light);
 
-      // Explicitly request media/storage permissions prior to launching file picker
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted && perm.canAskAgain) {
-        Alert.alert(
-          isRTL ? 'إذن الوصول للملفات مطلوب' : 'File Permission Required',
-          isRTL
-            ? 'يرجى السماح للتطبيق باختيار مستند أو صورة الرخصة التجارية.'
-            : 'Please grant file access so you can select your Trade License document or image.'
-        );
-        return;
+      // Prompt native Android OS permission dialog for file & media access
+      if (Platform.OS === 'android') {
+        try {
+          if (Number(Platform.Version) >= 33) {
+            await PermissionsAndroid.request(
+              PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
+              {
+                title: isRTL ? 'إذن الوصول للملفات والوسائط' : 'File & Media Access',
+                message: isRTL
+                  ? 'يتطلب ميزان إذن الوصول للملفات لاختيار ملف الرخصة التجارية.'
+                  : 'Mizan requires access to your files to select your UAE Trade License.',
+                buttonPositive: isRTL ? 'موافق' : 'Allow',
+                buttonNegative: isRTL ? 'إلغاء' : 'Cancel',
+              }
+            );
+          } else {
+            await PermissionsAndroid.request(
+              PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+              {
+                title: isRTL ? 'إذن قراءة الملفات' : 'Storage Access',
+                message: isRTL
+                  ? 'يتطلب ميزان إذن الوصول للملفات لاختيار ملف الرخصة التجارية.'
+                  : 'Mizan requires access to your files to select your Trade License document.',
+                buttonPositive: isRTL ? 'موافق' : 'Allow',
+                buttonNegative: isRTL ? 'إلغاء' : 'Cancel',
+              }
+            );
+          }
+        } catch (permErr) {
+          console.warn('Android permissions request notice:', permErr);
+        }
+      } else {
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
       }
 
       // Open system file manager (supports both PDF documents and images)
@@ -333,10 +357,26 @@ export default function BusinessOnboardingScreen() {
         const isPdf = asset.name?.toLowerCase().endsWith('.pdf') || asset.mimeType?.includes('pdf');
         const mimeType = isPdf ? 'application/pdf' : asset.mimeType || 'image/jpeg';
 
-        // Read file contents as base64 using Expo FileSystem
-        const base64 = await FileSystem.readAsStringAsync(asset.uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
+        // Read file contents as base64 using the modern Expo SDK 58 File API with resilient blob fallback
+        let base64 = '';
+        try {
+          const file = new File(asset.uri);
+          base64 = await file.base64();
+        } catch (fileErr) {
+          console.warn('File.base64() fallback to fetch blob:', fileErr);
+          const response = await fetch(asset.uri);
+          const blob = await response.blob();
+          base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const resStr = (reader.result as string) || '';
+              const pureBase64 = resStr.includes(',') ? resStr.split(',')[1] : resStr;
+              resolve(pureBase64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        }
 
         await processLicenseImage(base64, mimeType);
       }

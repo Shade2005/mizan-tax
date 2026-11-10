@@ -142,7 +142,13 @@ export class FirestoreService {
     const businessesRef = collection(db, 'businesses');
     const q = query(businessesRef, where('ownerId', '==', ownerId));
 
-    const snapshot = await getDocs(q);
+    // Fast safety timeout: guarantee response within 2.5s to prevent any UI stall
+    const fetchPromise = getDocs(q);
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Firestore read timeout (2500ms)')), 2500)
+    );
+
+    const snapshot = await Promise.race([fetchPromise, timeoutPromise]);
     const list: FirestoreBusiness[] = [];
     snapshot.forEach((d) => {
       list.push(d.data() as FirestoreBusiness);
